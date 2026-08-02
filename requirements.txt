@@ -1,3 +1,8 @@
-pandas
-requests
 python-telegram-bot
+pandas
+numpy
+requests
+pytz
+pyotp
+smartapi-python
+flask
