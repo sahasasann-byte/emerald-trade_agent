@@ -1,1 +1,0 @@
-worker: python crypto_scalper_agent.py
