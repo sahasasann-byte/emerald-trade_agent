@@ -1,117 +1,126 @@
-import asyncio
+import math
 import os
+import sys
 import threading
 import time
 from datetime import datetime
-import pytz
+import httpx
 import numpy as np
 import pandas as pd
 import requests
-from bs4 import BeautifulSoup
-from flask import Flask
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
-    CommandHandler,
     ContextTypes,
     MessageHandler,
     filters,
 )
 
 # ==========================================
-# 1. RENDER WEB SERVER & KEEP-ALIVE
+# 1. CONFIGURATION
 # ==========================================
-app_flask = Flask(__name__)
+TELEGRAM_BOT_TOKEN = "8882498923:AAEFY7dC_DWFbBfFN81IXvyuebuevwG4Ruc"
+TELEGRAM_CHAT_ID = "5944911045"
 
-RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "http://127.0.0.1:8080")
+# PythonAnywhere Proxy URL
+PA_PROXY = "http://proxy.server:3128"
 
-@app_flask.route("/")
-def home():
-    return "🚀 Trading Bot Web Server is Active & Running 24/7!"
-
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app_flask.run(host="0.0.0.0", port=port)
-
-def self_ping():
-    time.sleep(30)
-    while True:
-        try:
-            url = RENDER_EXTERNAL_URL
-            print(f"🔄 Keep-Alive Self-Pinging: {url}")
-            requests.get(url, timeout=10)
-        except Exception as e:
-            print(f"⚠️ Self-Ping Warning: {e}")
-        time.sleep(600)  # Ping every 10 minutes
-
-
-# ==========================================
-# 2. CONFIGURATION & ENVIRONMENT VARIABLES
-# ==========================================
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN_HERE")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "YOUR_TELEGRAM_CHAT_ID_HERE")
-
-IS_BOT_ACTIVE = True
-EOD_REPORT_SENT = False
-
-LATEST_DATA = {
-    "NIFTY": {"spot": 0.0, "vwap": 0.0, "ema9": 0.0, "ema20": 0.0, "status": "വിശകലനം ചെയ്യുന്നു..."},
-    "SENSEX": {"spot": 0.0, "vwap": 0.0, "ema9": 0.0, "ema20": 0.0, "status": "വിശകലനം ചെയ്യുന്നു..."},
+# Global Prices Tracker
+LATEST_PRICES = {
+    "BTC": 0.0,
+    "ETH": 0.0,
+    "XAUUSD": 0.0,
+    "NIFTY": {"spot": 0.0, "ema5": 0.0, "ema20": 0.0},
+    "SENSEX": {"spot": 0.0, "ema5": 0.0, "ema20": 0.0},
 }
 
+# ISOLATED ACTIVE TRADES
 ACTIVE_TRADES = {
+    "BTC": None,
+    "ETH": None,
+    "XAUUSD": None,
     "NIFTY": None,
     "SENSEX": None,
 }
 
-JOURNAL_TRADES = []
+DAILY_JOURNAL = []
 
 
 # ==========================================
-# 3. TIMEZONE-LOCKED MARKET HOURS CHECKER
-# ==========================================
-def is_market_open():
-    """Checks IST (Asia/Kolkata) time regardless of UTC server timezone"""
-    tz = pytz.timezone("Asia/Kolkata")
-    now = datetime.now(tz)
-    
-    # Weekend check: Saturday (5), Sunday (6)
-    if now.weekday() >= 5:
-        return False
-        
-    market_start = now.replace(hour=9, minute=15, second=0, microsecond=0)
-    market_end = now.replace(hour=15, minute=30, second=0, microsecond=0)
-    
-    return market_start <= now <= market_end
-
-
-# ==========================================
-# 4. TELEGRAM ALERT DISPATCHER
+# 2. TELEGRAM ALERT DISPATCHER
 # ==========================================
 def send_telegram_alert(message):
+    """Sends clean, formatted alerts to Telegram through PythonAnywhere Proxy."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
         "parse_mode": "Markdown",
     }
+    proxies = {
+        "http": PA_PROXY,
+        "https": PA_PROXY,
+    }
+
     try:
-        requests.post(url, json=payload, timeout=10)
+        requests.post(url, json=payload, proxies=proxies, timeout=10)
+    except Exception:
+        try:
+            requests.post(url, json=payload, timeout=5)
+        except Exception as e:
+            print(f"⚠️ Telegram Alert Error: {e}")
+
+
+# ==========================================
+# 3. PYTHONANYWHERE COMPATIBLE FETCHERS
+# ==========================================
+def fetch_crypto_candles(asset="BTC", count=100):
+    """Fetches Live Price using CryptoCompare/CoinGecko (Guaranteed on PA Free Tier)."""
+    proxies = {"http": PA_PROXY, "https": PA_PROXY}
+
+    # 1. Direct Price Fetching via CryptoCompare (PythonAnywhere Whitelisted)
+    fsym = "BTC" if asset == "BTC" else ("ETH" if asset == "ETH" else "GOLD")
+    tsym = "USD"
+
+    try:
+        url = f"https://min-api.cryptocompare.com/data/v2/histo/minute?fsym={fsym}&tsym={tsym}&limit={count}&aggregate=5"
+        res = requests.get(url, proxies=proxies, timeout=10)
+        data = res.json()
+
+        if "Data" in data and "Data" in data["Data"]:
+            candles = data["Data"]["Data"]
+            df = pd.DataFrame(candles)
+            df["time"] = pd.to_datetime(df["time"], unit="s")
+            df = df.rename(columns={"volumeto": "volume"})
+            for col in ["open", "high", "low", "close", "volume"]:
+                df[col] = df[col].astype(float)
+            return df[["time", "open", "high", "low", "close", "volume"]]
     except Exception as e:
-        print(f"⚠️ Telegram Alert Error: {e}")
+        print(f"CryptoCompare Error for {asset}: {e}")
+
+    # Fallback for Direct Single Price
+    try:
+        price_url = f"https://min-api.cryptocompare.com/data/price?fsym={fsym}&tsyms=USD"
+        res = requests.get(price_url, proxies=proxies, timeout=5)
+        price_data = res.json()
+        if "USD" in price_data:
+            current_p = float(price_data["USD"])
+            LATEST_PRICES[asset] = current_p
+    except Exception as e:
+        print(f"Direct Price Fallback Error: {e}")
+
+    return pd.DataFrame()
 
 
-# ==========================================
-# 5. DATA FETCHERS (PRIMARY & FALLBACK SOURCES)
-# ==========================================
-
-# --- SOURCE 1: Yahoo Finance API ---
-def fetch_yahoo_candles(ticker, interval="5m", period="1d"):
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range={period}"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+def fetch_index_candles(symbol="NIFTY"):
+    """Fetches 5-minute candles for Nifty & Sensex."""
+    ticker = "^NSEI" if symbol == "NIFTY" else "^BSESN"
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=5m&range=1d"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    proxies = {"http": PA_PROXY, "https": PA_PROXY}
 
     try:
-        res = requests.get(url, headers=headers, timeout=10)
+        res = requests.get(url, headers=headers, proxies=proxies, timeout=10)
         data = res.json()["chart"]["result"][0]
         timestamps = data["timestamp"]
         quotes = data["indicators"]["quote"][0]
@@ -123,462 +132,271 @@ def fetch_yahoo_candles(ticker, interval="5m", period="1d"):
                 "high": quotes["high"],
                 "low": quotes["low"],
                 "close": quotes["close"],
-                "volume": quotes.get("volume", [1000] * len(timestamps)),
             }
         ).dropna()
-        print(f"✅ Data fetched from PRIMARY Source: Yahoo Finance ({ticker})")
         return df
     except Exception:
-        # Secondary range fallback for Yahoo Finance
-        try:
-            url_fallback = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range=5d"
-            res = requests.get(url_fallback, headers=headers, timeout=10)
-            data = res.json()["chart"]["result"][0]
-            timestamps = data["timestamp"]
-            quotes = data["indicators"]["quote"][0]
-
-            df = pd.DataFrame(
-                {
-                    "time": pd.to_datetime(timestamps, unit="s"),
-                    "open": quotes["open"],
-                    "high": quotes["high"],
-                    "low": quotes["low"],
-                    "close": quotes["close"],
-                    "volume": quotes.get("volume", [1000] * len(timestamps)),
-                }
-            ).dropna()
-            print(f"✅ Data fetched from PRIMARY Source: Yahoo Finance 5D ({ticker})")
-            return df
-        except Exception:
-            return pd.DataFrame()
+        return pd.DataFrame()
 
 
-# --- SOURCE 2: Google Finance Scraping ---
-def fetch_google_finance_price(symbol):
-    ticker_map = {
-        "NIFTY": "NIFTY_50:INDEXNSE",
-        "SENSEX": "SENSEX:INDEXBO",
-    }
-    g_symbol = ticker_map.get(symbol.upper(), f"{symbol}:NSE")
-    url = f"https://www.google.com/finance/quote/{g_symbol}"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+# ==========================================
+# 4. SCALPER ENGINES
+# ==========================================
+def scan_crypto_market(asset="BTC"):
+    global ACTIVE_TRADES, LATEST_PRICES, DAILY_JOURNAL
 
-    try:
-        res = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(res.text, "html.parser")
-        price_div = soup.find("div", {"class": "YMlKec fxfa3d"})
-        if price_div:
-            price_str = price_div.text.replace("₹", "").replace(",", "").strip()
-            curr_price = float(price_str)
-            
-            # Generate temporary data structure for indicator calculations
-            times = pd.date_range(end=datetime.now(), periods=20, freq="5min")
-            prices = [curr_price] * 20
-            df = pd.DataFrame({
-                "time": times,
-                "open": prices,
-                "high": prices,
-                "low": prices,
-                "close": prices,
-                "volume": [1000] * 20
-            })
-            print(f"✅ Data fetched from FALLBACK Source: Google Finance ({symbol})")
-            return df
-    except Exception as e:
-        print(f"⚠️ Google Finance Scraping Failed: {e}")
-    return pd.DataFrame()
+    df = fetch_crypto_candles(asset=asset)
+
+    if not df.empty and len(df) >= 20:
+        df["ema_5"] = df["close"].ewm(span=5, adjust=False).mean()
+        df["ema_20"] = df["close"].ewm(span=20, adjust=False).mean()
+
+        curr_price = round(df["close"].iloc[-1], 2)
+        ema_5 = round(df["ema_5"].iloc[-1], 2)
+        ema_20 = round(df["ema_20"].iloc[-1], 2)
+
+        LATEST_PRICES[asset] = curr_price
+
+        fee_buffer = round(curr_price * 0.0012, 2)
+        active = ACTIVE_TRADES[asset]
+
+        if active:
+            target, sl, side = active["target"], active["sl"], active["side"]
+            entry = active["entry"]
+
+            if side == "LONG":
+                if curr_price >= target:
+                    pnl = round(((curr_price - entry) / entry) * 100, 2)
+                    send_telegram_alert(
+                        f"🎯 *TARGET HIT ({asset})!* 🚀\n\n• Exit Price: *${curr_price:,.2f}*\n• Net Profit: *+{pnl}%* 🟢"
+                    )
+                    ACTIVE_TRADES[asset] = None
+                elif curr_price <= sl:
+                    pnl = round(((curr_price - entry) / entry) * 100, 2)
+                    send_telegram_alert(
+                        f"🛑 *STOP LOSS HIT ({asset})!* 🔻\n\n• Exit Price: *${curr_price:,.2f}*\n• Realized Loss: *{pnl}%* 🔴"
+                    )
+                    ACTIVE_TRADES[asset] = None
+
+            elif side == "SHORT":
+                if curr_price <= target:
+                    pnl = round(((entry - curr_price) / entry) * 100, 2)
+                    send_telegram_alert(
+                        f"🎯 *TARGET HIT ({asset})!* 🚀\n\n• Exit Price: *${curr_price:,.2f}*\n• Net Profit: *+{pnl}%* 🟢"
+                    )
+                    ACTIVE_TRADES[asset] = None
+                elif curr_price >= sl:
+                    pnl = round(((entry - curr_price) / entry) * 100, 2)
+                    send_telegram_alert(
+                        f"🛑 *STOP LOSS HIT ({asset})!* 🔻\n\n• Exit Price: *${curr_price:,.2f}*\n• Realized Loss: *{pnl}%* 🔴"
+                    )
+                    ACTIVE_TRADES[asset] = None
+            return
+
+        if ACTIVE_TRADES[asset] is None:
+            if curr_price > ema_5 and ema_5 > ema_20:
+                stop_loss = round(ema_20, 2)
+                risk = round(curr_price - stop_loss, 2)
+                if risk >= (curr_price * 0.0015):
+                    target = round(curr_price + (2 * risk) + fee_buffer, 2)
+                    ACTIVE_TRADES[asset] = {
+                        "asset": asset,
+                        "side": "LONG",
+                        "entry": curr_price,
+                        "target": target,
+                        "sl": stop_loss,
+                    }
+                    msg = f"🚨 *NEW BUY / LONG SCALP ({asset})!* 🚀\n\n• Entry: *${curr_price:,.2f}*\n• Target: *${target:,.2f}*\n• Stop Loss: *${stop_loss:,.2f}*"
+                    send_telegram_alert(msg)
+
+            elif curr_price < ema_5 and ema_5 < ema_20:
+                stop_loss = round(ema_20, 2)
+                risk = round(stop_loss - curr_price, 2)
+                if risk >= (curr_price * 0.0015):
+                    target = round(curr_price - (2 * risk) - fee_buffer, 2)
+                    ACTIVE_TRADES[asset] = {
+                        "asset": asset,
+                        "side": "SHORT",
+                        "entry": curr_price,
+                        "target": target,
+                        "sl": stop_loss,
+                    }
+                    msg = f"🚨 *NEW SELL / SHORT SCALP ({asset})!* 🔻\n\n• Entry: *${curr_price:,.2f}*\n• Target: *${target:,.2f}*\n• Stop Loss: *${stop_loss:,.2f}*"
+                    send_telegram_alert(msg)
 
 
-# --- MULTI-SOURCE DATA PIPELINE ---
-def get_market_data(symbol="NIFTY"):
-    df = pd.DataFrame()
+def scan_indian_options(symbol="NIFTY"):
+    global ACTIVE_TRADES, LATEST_PRICES
 
-    # Determine ticker format
-    if symbol == "NIFTY":
-        ticker = "^NSEI"
-    elif symbol == "SENSEX":
-        ticker = "^BSESN"
-    else:
-        ticker = f"{symbol}.NS"
+    df = fetch_index_candles(symbol)
+    if df.empty or len(df) < 20:
+        return
 
-    # 1. Fetch from Yahoo Finance
-    df = fetch_yahoo_candles(ticker)
-
-    # 2. Fallback to Google Finance Scraping
-    if df.empty or len(df) < 5:
-        df = fetch_google_finance_price(symbol)
-
-    if df.empty or len(df) < 5:
-        print(f"❌ All sources failed to retrieve data for {symbol}.")
-        return None
-
-    # Technical Indicators Calculations
-    df["ema_9"] = df["close"].ewm(span=9, adjust=False).mean()
+    df["ema_5"] = df["close"].ewm(span=5, adjust=False).mean()
     df["ema_20"] = df["close"].ewm(span=20, adjust=False).mean()
 
-    # VWAP Calculation
-    df["tp"] = (df["high"] + df["low"] + df["close"]) / 3
-    vol_sum = df["volume"].cumsum().replace(0, 1)
-    df["vwap"] = (df["tp"] * df["volume"]).cumsum() / vol_sum
-
-    return df
-
-
-# ==========================================
-# 6. STOCK SCALP ANALYSIS ENGINE
-# ==========================================
-def analyze_stock_scalp(stock_symbol):
-    clean_symbol = stock_symbol.strip().upper().replace(".NS", "")
-    df = get_market_data(clean_symbol)
-
-    if df is None or len(df) < 5:
-        return f"⚠️ **{clean_symbol}** എന്ന സ്റ്റോക്കിന്റെ വിവരങ്ങൾ ലഭ്യമായില്ല. Symbol ശരിയാണോ എന്ന് പരിശോധിക്കുക."
-
-    curr_price = round(df["close"].iloc[-1], 2)
-    ema_9 = round(df["ema_9"].iloc[-1], 2)
-    ema_20 = round(df["ema_20"].iloc[-1], 2)
-    vwap = round(df["vwap"].iloc[-1], 2)
-
-    ema_diff_pct = abs(ema_9 - ema_20) / curr_price * 100
-    if ema_diff_pct < 0.15:
-        return (
-            f"📊 *STOCK ANALYSIS: {clean_symbol}*\n\n"
-            f"• Current Price: *₹{curr_price:,.2f}*\n"
-            f"• VWAP: *₹{vwap}* | 9 EMA: *₹{ema_9}*\n\n"
-            f"⚠️ *മാർക്കറ്റ് ചോപ്പിയാണ് (Choppy Market), ഈ സ്റ്റോക്കിൽ ട്രേഡ് ഒഴിവാക്കുന്നു ⏸️*"
-        )
-
-    # 1:1.8 Risk Reward Signals
-    if curr_price > vwap and ema_9 > ema_20:
-        sl = round(ema_20, 2)
-        risk = round(curr_price - sl, 2)
-        target = round(curr_price + (1.8 * risk), 2)
-        return (
-            f"🚨 *STOCK BUY SCALP SIGNAL ({clean_symbol})* 🚀\n\n"
-            f"• Entry Price: *₹{curr_price:,.2f}*\n"
-            f"• Target Price: *₹{target:,.2f}* (1:1.8 Risk-Reward)\n"
-            f"• Stop Loss: *₹{sl:,.2f}*\n\n"
-            f"💡 *വിശകലനം:* ട്രെൻഡ് ബുള്ളിഷ് ആണ്. പ്രൈസ് VWAP-നും 9 EMA-യ്ക്കും മുകളിലാണ്."
-        )
-
-    elif curr_price < vwap and ema_9 < ema_20:
-        sl = round(ema_20, 2)
-        risk = round(sl - curr_price, 2)
-        target = round(curr_price - (1.8 * risk), 2)
-        return (
-            f"🚨 *STOCK SHORT SCALP SIGNAL ({clean_symbol})* 🔻\n\n"
-            f"• Entry Price: *₹{curr_price:,.2f}*\n"
-            f"• Target Price: *₹{target:,.2f}* (1:1.8 Risk-Reward)\n"
-            f"• Stop Loss: *₹{sl:,.2f}*\n\n"
-            f"💡 *വിശകലനം:* ട്രെൻഡ് ബെയറിഷ് ആണ്. പ്രൈസ് VWAP-നും 9 EMA-യ്ക്കും താഴെയാണ്."
-        )
-
-    return (
-        f"📊 *STOCK ANALYSIS: {clean_symbol}*\n\n"
-        f"• Live Price: *₹{curr_price:,.2f}*\n"
-        f"• VWAP: *₹{vwap}*\n\n"
-        f"⏸️ *വ്യക്തമായ എൻട്രി സിഗ്നൽ ഇല്ല. വിപണി കാണുന്നു...*"
-    )
-
-
-# ==========================================
-# 7. INDEX SCANNER ENGINE (NIFTY & SENSEX)
-# ==========================================
-def scan_index_market(symbol="NIFTY"):
-    global ACTIVE_TRADES, LATEST_DATA, JOURNAL_TRADES
-
-    if not is_market_open():
-        LATEST_DATA[symbol]["status"] = "മാർക്കറ്റ് ക്ലോസ്ഡ് 🔒"
-        return
-
-    df = get_market_data(symbol)
-    if df is None:
-        return
-
     curr_spot = round(df["close"].iloc[-1], 2)
-    ema_9 = round(df["ema_9"].iloc[-1], 2)
+    ema_5 = round(df["ema_5"].iloc[-1], 2)
     ema_20 = round(df["ema_20"].iloc[-1], 2)
-    vwap = round(df["vwap"].iloc[-1], 2)
 
-    strike_step = 50 if symbol == "NIFTY" else 100
-    atm_strike = round(curr_spot / strike_step) * strike_step
+    LATEST_PRICES[symbol]["spot"] = curr_spot
+    LATEST_PRICES[symbol]["ema5"] = ema_5
+    LATEST_PRICES[symbol]["ema20"] = ema_20
 
-    ema_spread = abs(ema_9 - ema_20) / curr_spot * 100
-    is_choppy = ema_spread < 0.10
-
-    LATEST_DATA[symbol] = {
-        "spot": curr_spot,
-        "vwap": vwap,
-        "ema9": ema_9,
-        "ema20": ema_20,
-        "status": "Choppy Market ⏸️" if is_choppy else "Trending 📈",
-    }
-
-    active = ACTIVE_TRADES[symbol]
-
-    # Exit Management
-    if active:
-        target_spot = active["target_spot"]
-        sl_spot = active["sl_spot"]
-        opt_type = active["type"]
-
-        if (opt_type == "CALL" and curr_spot >= target_spot) or (opt_type == "PUT" and curr_spot <= target_spot):
-            msg = (
-                f"🎯 *TARGET HIT TRIGGERED ({symbol} {active['strike']} {opt_type})!* 🚀\n\n"
-                f"• Spot Exit: *₹{curr_spot:,.2f}*\n"
-                f"• Target Spot: *₹{target_spot:,.2f}*\n"
-                f"✅ *ലാഭം വിജയകരമായി രേഖപ്പെടുത്തി!*"
-            )
-            send_telegram_alert(msg)
-            JOURNAL_TRADES.append({"symbol": symbol, "type": opt_type, "result": "PROFIT"})
-            ACTIVE_TRADES[symbol] = None
-
-        elif (opt_type == "CALL" and curr_spot <= sl_spot) or (opt_type == "PUT" and curr_spot >= sl_spot):
-            msg = (
-                f"🛑 *STOP LOSS TRIGGERED ({symbol} {active['strike']} {opt_type})!* 🔻\n\n"
-                f"• Spot Exit: *₹{curr_spot:,.2f}*\n"
-                f"• Stop Loss Level: *₹{sl_spot:,.2f}*\n"
-                f"⚠️ *റിസ്ക് മാനേജ്മെന്റ് പ്രകാരം ട്രേഡ് ക്ലോസ് ചെയ്തു.*"
-            )
-            send_telegram_alert(msg)
-            JOURNAL_TRADES.append({"symbol": symbol, "type": opt_type, "result": "LOSS"})
-            ACTIVE_TRADES[symbol] = None
-        return
-
-    if is_choppy:
-        return
-
-    # 1:1.8 Risk Reward Setup
-    rr_multiplier = 1.8
-    risk_pts = 15.0 if symbol == "NIFTY" else 45.0
-    reward_pts = risk_pts * rr_multiplier
-
-    # CALL BUY
-    if curr_spot > vwap and ema_9 > ema_20:
-        target_spot = round(curr_spot + reward_pts, 2)
-        sl_spot = round(curr_spot - risk_pts, 2)
-
-        ACTIVE_TRADES[symbol] = {
-            "type": "CALL",
-            "strike": atm_strike - strike_step,
-            "entry_spot": curr_spot,
-            "target_spot": target_spot,
-            "sl_spot": sl_spot,
-        }
-
-        msg = (
-            f"🚨 *NEW BUY {symbol} CALL OPTION!* 🚀\n\n"
-            f"• Strike (ITM): *{atm_strike - strike_step} CE*\n"
-            f"• Spot Entry: *₹{curr_spot:,.2f}*\n"
-            f"• Target Spot: *₹{target_spot:,.2f}* (1:1.8 RR)\n"
-            f"• Stop Loss Spot: *₹{sl_spot:,.2f}*\n\n"
-            f"💡 *കാരണം:* Spot പ്രൈസ് VWAP-നും 9 EMA-യ്ക്കും മുകളിലാണ്."
-        )
-        send_telegram_alert(msg)
-
-    # PUT BUY
-    elif curr_spot < vwap and ema_9 < ema_20:
-        target_spot = round(curr_spot - reward_pts, 2)
-        sl_spot = round(curr_spot + risk_pts, 2)
-
-        ACTIVE_TRADES[symbol] = {
-            "type": "PUT",
-            "strike": atm_strike + strike_step,
-            "entry_spot": curr_spot,
-            "target_spot": target_spot,
-            "sl_spot": sl_spot,
-        }
-
-        msg = (
-            f"🚨 *NEW BUY {symbol} PUT OPTION!* 🔻\n\n"
-            f"• Strike (ITM): *{atm_strike + strike_step} PE*\n"
-            f"• Spot Entry: *₹{curr_spot:,.2f}*\n"
-            f"• Target Spot: *₹{target_spot:,.2f}* (1:1.8 RR)\n"
-            f"• Stop Loss Spot: *₹{sl_spot:,.2f}*\n\n"
-            f"💡 *കാരണം:* Spot പ്രൈസ് VWAP-നും 9 EMA-യ്ക്കും താഴെയാണ്."
-        )
-        send_telegram_alert(msg)
-
-
-# ==========================================
-# 8. EOD ANALYSIS REPORT (10 PM IST)
-# ==========================================
-def generate_eod_report():
-    global EOD_REPORT_SENT
-
-    tz = pytz.timezone("Asia/Kolkata")
-    now = datetime.now(tz)
-
-    if now.hour >= 22 and not EOD_REPORT_SENT:
-        nifty = LATEST_DATA["NIFTY"]
-        sensex = LATEST_DATA["SENSEX"]
-        total_trades = len(JOURNAL_TRADES)
-
-        report = (
-            f"🌙 *END OF DAY (EOD) MARKET REPORT* 📊\n"
-            f"📅 തീയതി: *{now.strftime('%d-%m-%Y')}*\n\n"
-            f"📈 *NIFTY 50 Summary:*\n"
-            f"• Final Spot: *₹{nifty['spot']:,.2f}*\n"
-            f"• Status: *{nifty['status']}*\n\n"
-            f"📈 *SENSEX Summary:*\n"
-            f"• Final Spot: *₹{sensex['spot']:,.2f}*\n"
-            f"• Status: *{sensex['status']}*\n\n"
-            f"📝 *ഇന്നത്തെ ട്രേഡിംഗ് സംഗ്രഹം:*\n"
-            f"• ആകെ നൽകിയ സിഗ്നലുകൾ: *{total_trades}*\n\n"
-            f"ശുഭരാത്രി! നാളത്തെ വിപണിയ്ക്കായി കാത്തിരിക്കുന്നു. 😴"
-        )
-        send_telegram_alert(report)
-        EOD_REPORT_SENT = True
-
-    elif now.hour < 22:
-        EOD_REPORT_SENT = False
-
-
-# ==========================================
-# 9. TELEGRAM HANDLERS
-# ==========================================
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global IS_BOT_ACTIVE
-    IS_BOT_ACTIVE = True
-    await update.message.reply_text(
-        "🚀 *Render 24/7 Scalper & Stock Search Bot Online!*\n\n"
-        "ലഭ്യമായ കമാൻഡുകൾ:\n"
-        "• *N* - Nifty Current Data\n"
-        "• *S* - Sensex Current Data\n"
-        "• *NN* - Nifty Active Signals\n"
-        "• *SS* - Sensex Active Signals\n"
-        "• *NNN* - Nifty Detailed Status\n"
-        "• *SSS* - Sensex Detailed Status\n"
-        "• *STATUS* - Overall System Status\n"
-        "• *Stock Search* - (ഉദാഹരണത്തിന്: `RELIANCE`, `TATAMOTORS`)",
-        parse_mode="Markdown",
+    brokerage_pts_buffer = 4.0 if symbol == "NIFTY" else 10.0
+    atm_strike = (
+        round(curr_spot / 50) * 50
+        if symbol == "NIFTY"
+        else round(curr_spot / 100) * 100
     )
 
+    if ACTIVE_TRADES[symbol] is None:
+        if curr_spot > ema_5 and ema_5 > ema_20:
+            spot_risk = curr_spot - ema_20
+            if spot_risk >= (10 if symbol == "NIFTY" else 30):
+                est_entry_prem = 120.0 if symbol == "NIFTY" else 250.0
+                prem_risk = spot_risk * 0.50
+                target_prem = round(
+                    est_entry_prem + (2 * prem_risk) + brokerage_pts_buffer, 2
+                )
+                sl_prem = round(est_entry_prem - prem_risk, 2)
+
+                ACTIVE_TRADES[symbol] = {
+                    "type": "CALL",
+                    "entry_spot": curr_spot,
+                    "entry_premium": est_entry_prem,
+                    "target_premium": target_prem,
+                    "sl_premium": sl_prem,
+                }
+
+                msg = f"🚨 *NEW BUY {symbol} CALL OPTION!* 🚀\n\n• Strike: *{atm_strike} CE*\n• Spot Entry: *₹{curr_spot:,.2f}*\n• Target Prem: *₹{target_prem}*\n• Stop Loss Prem: *₹{sl_prem}*"
+                send_telegram_alert(msg)
+
+
+# ==========================================
+# 5. TELEGRAM HANDLERS
+# ==========================================
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global IS_BOT_ACTIVE
     text = update.message.text.strip().upper()
 
-    if text in ["START", "/START"]:
-        IS_BOT_ACTIVE = True
-        await update.message.reply_text("✅ *സ്കാനിംഗ് ആരംഭിച്ചു...*", parse_mode="Markdown")
-
-    elif text == "N":
-        d = LATEST_DATA["NIFTY"]
+    if text in ["1", "BTC", "ETH"]:
         msg = (
-            f"📊 *NIFTY 50 LIVE DATA:*\n\n"
-            f"• Spot Price: *₹{d['spot']:,.2f}*\n"
-            f"• VWAP: *₹{d['vwap']}*\n"
-            f"• 9 EMA: *₹{d['ema9']}*\n"
-            f"• 20 EMA: *₹{d['ema20']}*"
+            f"📊 *CRYPTO & GOLD LIVE PRICES:*\n\n"
+            f"• BTC: *${LATEST_PRICES['BTC']:,.2f}*\n"
+            f"• ETH: *${LATEST_PRICES['ETH']:,.2f}*\n"
+            f"• XAUUSD: *${LATEST_PRICES['XAUUSD']:,.2f}*"
         )
         await update.message.reply_text(msg, parse_mode="Markdown")
 
+    elif text == "2":
+        msg = "🔄 *ACTIVE TRADES STATUS:*\n\n"
+        has_trade = False
+        for k in ["BTC", "ETH", "XAUUSD"]:
+            t = ACTIVE_TRADES[k]
+            if t:
+                has_trade = True
+                msg += f"• *{k}*: {t['side']} | Entry: ${t['entry']} | Target: ${t['target']}\n"
+        if not has_trade:
+            msg = "⏸️ Crypto & Gold - നിലവിൽ ആക്റ്റീവ് ട്രേഡുകൾ ഒന്നുമില്ല."
+        await update.message.reply_text(msg, parse_mode="Markdown")
+
+    elif text == "3":
+        await update.message.reply_text("✅ Crypto & Gold Scanner Active (24/7)!")
+
+    elif text == "N":
+        d = LATEST_PRICES["NIFTY"]
+        msg = f"📊 *NIFTY 50 LIVE DATA:*\n\n• Spot: *₹{d['spot']:,.2f}*\n• 5 EMA: *₹{d['ema5']}*\n• 20 EMA: *₹{d['ema20']}*"
+        await update.message.reply_text(msg, parse_mode="Markdown")
+
     elif text == "S":
-        d = LATEST_DATA["SENSEX"]
-        msg = (
-            f"📊 *SENSEX LIVE DATA:*\n\n"
-            f"• Spot Price: *₹{d['spot']:,.2f}*\n"
-            f"• VWAP: *₹{d['vwap']}*\n"
-            f"• 9 EMA: *₹{d['ema9']}*\n"
-            f"• 20 EMA: *₹{d['ema20']}*"
-        )
+        d = LATEST_PRICES["SENSEX"]
+        msg = f"📊 *SENSEX LIVE DATA:*\n\n• Spot: *₹{d['spot']:,.2f}*\n• 5 EMA: *₹{d['ema5']}*\n• 20 EMA: *₹{d['ema20']}*"
         await update.message.reply_text(msg, parse_mode="Markdown")
 
     elif text in ["NN", "SS"]:
         sym = "NIFTY" if text == "NN" else "SENSEX"
         t = ACTIVE_TRADES[sym]
         if t:
-            msg = (
-                f"🚨 *{sym} ACTIVE TRADE SIGNAL:*\n\n"
-                f"• Option Type: *{t['type']}*\n"
-                f"• Strike: *{t['strike']}*\n"
-                f"• Entry Spot: *₹{t['entry_spot']:,.2f}*\n"
-                f"• Target Spot: *₹{t['target_spot']:,.2f}*\n"
-                f"• Stop Loss Spot: *₹{t['sl_spot']:,.2f}*"
-            )
+            msg = f"🔄 *{sym} ACTIVE TRADE:*\n\nType: *{t['type']}*\nEntry Spot: *₹{t['entry_spot']}*\nTarget Premium: *₹{t['target_premium']}*"
         else:
-            msg = f"⏸️ *{sym}* - ആക്റ്റീവ് ട്രേഡുകൾ ഒന്നുമില്ല, വിപണി കാണുന്നു..."
+            msg = f"⏸️ *{sym}* - നിലവിൽ ആക്റ്റീവ് ട്രേഡുകൾ ഒന്നുമില്ല."
         await update.message.reply_text(msg, parse_mode="Markdown")
 
     elif text in ["NNN", "SSS"]:
         sym = "NIFTY" if text == "NNN" else "SENSEX"
-        d = LATEST_DATA[sym]
+        d = LATEST_PRICES[sym]
         t = ACTIVE_TRADES[sym]
 
         trade_status = (
-            f"Type: *{t['type']}* | Strike: *{t['strike']}* | Entry: *₹{t['entry_spot']}*"
+            f"Type: *{t['type']}* | Entry: *₹{t['entry_spot']}* | Target Prem: *₹{t['target_premium']}*"
             if t
-            else "ആക്റ്റീവ് ട്രേഡുകൾ ഒന്നുമില്ല, വിപണി കാണുന്നു ⏸️"
+            else "ആക്റ്റീവ് ട്രേഡുകൾ ഒന്നുമില്ല ⏸️"
         )
 
         msg = (
-            f"📈 *{sym} FULL DETAILED STATUS:*\n\n"
+            f"📈 *{sym} FULL DETAILED ANALYSIS:*\n\n"
             f"• Spot Price: *₹{d['spot']:,.2f}*\n"
-            f"• Market Condition: *{d['status']}*\n"
-            f"• VWAP: *₹{d['vwap']}*\n"
-            f"• 9 EMA: *₹{d['ema9']}*\n"
+            f"• 5 EMA: *₹{d['ema5']}*\n"
             f"• 20 EMA: *₹{d['ema20']}*\n\n"
-            f"🔄 *Trade Status:*\n{trade_status}"
+            f"🔄 *Active Trade Status:*\n{trade_status}"
         )
         await update.message.reply_text(msg, parse_mode="Markdown")
 
-    elif text == "STATUS":
-        has_active = False
-        msg = "🔄 *മാർക്കറ്റ് നിലവിലെ അവസ്ഥ:*\n\n"
-        for sym in ["NIFTY", "SENSEX"]:
-            t = ACTIVE_TRADES[sym]
-            d = LATEST_DATA[sym]
-            if t:
-                has_active = True
-                msg += f"• *{sym}*: Active Trade ({t['type']}) | Entry: ₹{t['entry_spot']}\n"
-            else:
-                msg += f"• *{sym}*: {d['status']} | Price: ₹{d['spot']}\n"
-
-        if not has_active:
-            msg += "\n*ആക്റ്റീവ് ട്രേഡുകൾ ഒന്നുമില്ല, വിശകലനം ചെയ്യുന്നു...*"
-
-        await update.message.reply_text(msg, parse_mode="Markdown")
-
-    else:
-        await update.message.reply_text(f"🔍 *{text}* വിപണി വിശകലനം ചെയ്യുന്നു...", parse_mode="Markdown")
-        response = analyze_stock_scalp(text)
-        await update.message.reply_text(response, parse_mode="Markdown")
-
 
 # ==========================================
-# 10. BACKGROUND SCANNER THREAD
+# 6. BACKGROUND SCANNER
 # ==========================================
 def background_scanner():
     while True:
         try:
-            if IS_BOT_ACTIVE:
-                scan_index_market("NIFTY")
-                scan_index_market("SENSEX")
-                generate_eod_report()
+            for coin in ["BTC", "ETH", "XAUUSD"]:
+                scan_crypto_market(coin)
+            scan_indian_options("NIFTY")
+            scan_indian_options("SENSEX")
             time.sleep(10)
         except Exception as e:
-            print(f"⚠️ Background Loop Exception: {e}")
+            print(f"Scanner Loop Error: {e}")
             time.sleep(10)
 
 
 # ==========================================
-# 11. MAIN EXECUTION
+# 7. MAIN EXECUTION
 # ==========================================
 if __name__ == "__main__":
-    print("🚀 Master Option & Stock Scalper Bot (Render Mode) ആരംഭിക്കുന്നു...")
+    print("🚀 Starting Master Trading Agent...")
 
-    t_flask = threading.Thread(target=run_flask, daemon=True)
-    t_flask.start()
+    t = threading.Thread(target=background_scanner, daemon=True)
+    t.start()
 
-    t_ping = threading.Thread(target=self_ping, daemon=True)
-    t_ping.start()
+    try:
+        app = (
+            ApplicationBuilder()
+            .token(TELEGRAM_BOT_TOKEN)
+            .proxy_url(PA_PROXY)
+            .get_updates_proxy_url(PA_PROXY)
+            .build()
+        )
+        app.add_handler(
+            MessageHandler(filters.TEXT & (~filters.COMMAND), text_handler)
+        )
 
-    t_scan = threading.Thread(target=background_scanner, daemon=True)
-    t_scan.start()
+        print("✅ Telegram Listener Ready!")
+        send_telegram_alert(
+            "🚀 *Master Trading Bot Online (CryptoCompare API Working)!*"
+        )
+        app.run_polling()
 
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), text_handler))
-
-    print("✅ Render Web Server & Telegram ബോട്ട് സംയോജനം പൂർത്തിയായി!")
-    asyncio.run(app.run_polling(close_loop=False))
+    except Exception as err:
+        print(f"⚠️ Proxy Setup Fallback: {err}")
+        try:
+            app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+            app.add_handler(
+                MessageHandler(filters.TEXT & (~filters.COMMAND), text_handler)
+            )
+            print("✅ Telegram Listener Ready (Direct Mode)!")
+            send_telegram_alert("🚀 *Master Trading Bot Online (Direct)!*")
+            app.run_polling()
+        except Exception as err2:
+            print(f"⚠️ Polling Error: {err2}")
+            while True:
+                time.sleep(60)
