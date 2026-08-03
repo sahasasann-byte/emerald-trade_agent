@@ -1,10 +1,9 @@
-python-telegram-bot
+Flask
+requests
 pandas
 numpy
-requests
 pytz
 pyotp
 smartapi-python
-logzero
-websocket-client
-flask
+python-telegram-bot
+beautifulsoup4
