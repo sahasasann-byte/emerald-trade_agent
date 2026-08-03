@@ -8,10 +8,8 @@ import pytz
 import numpy as np
 import pandas as pd
 import requests
-import pyotp
 from bs4 import BeautifulSoup
 from flask import Flask
-from SmartApi import SmartConnect
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -65,12 +63,6 @@ def self_ping():
 TELEGRAM_BOT_TOKEN = "8866649004:AAHuRrhqCHqRq0Ucb1i_UyTCG2B5nKOCkps"
 TELEGRAM_CHAT_ID = "5944911045"
 
-# Angel One Credentials
-ANGEL_API_KEY = "dvQFbsAJ"
-ANGEL_CLIENT_CODE = "S62895445"
-ANGEL_PIN = "4482"
-TOTP_SECRET = "MTLSL363M22F5VIZY574XRFYXU"
-
 IS_BOT_ACTIVE = True
 EOD_REPORT_SENT = False
 
@@ -85,14 +77,6 @@ ACTIVE_TRADES = {
 }
 
 JOURNAL_TRADES = []
-smart_api = None
-IS_ANGEL_LOGGED_IN = False
-
-# Symbol Mappings for Angel One Tokens
-ANGEL_TOKENS = {
-    "NIFTY": {"token": "99926000", "exchange": "NSE"},
-    "SENSEX": {"token": "99919000", "exchange": "BSE"},
-}
 
 
 # ==========================================
@@ -130,70 +114,10 @@ def send_telegram_alert(message):
 
 
 # ==========================================
-# 5. ANGEL ONE LOGIN WITH AUTO-RETRY
-# ==========================================
-def init_angel_one():
-    global smart_api, IS_ANGEL_LOGGED_IN
-    try:
-        smart_api = SmartConnect(api_key=ANGEL_API_KEY)
-        totp = pyotp.TOTP(TOTP_SECRET.strip().replace(" ", "")).now()
-        data = smart_api.generateSession(ANGEL_CLIENT_CODE, ANGEL_PIN, totp)
-        if data and data.get("status"):
-            logging.info("✅ Angel One SmartAPI Logged in Successfully!")
-            IS_ANGEL_LOGGED_IN = True
-            return True
-        else:
-            logging.warning(f"⚠️ Angel API Login Failed: {data.get('message')}")
-            IS_ANGEL_LOGGED_IN = False
-    except Exception as e:
-        logging.error(f"⚠️ Angel API Login Error: {e}")
-        IS_ANGEL_LOGGED_IN = False
-    return False
-
-
-# ==========================================
-# 6. DATA FETCHERS (3 FALLBACK SOURCES)
+# 5. DATA FETCHERS (YAHOO & GOOGLE FINANCE)
 # ==========================================
 
-# --- SOURCE 1: Angel One SmartAPI ---
-def fetch_angel_candles(symbol):
-    global IS_ANGEL_LOGGED_IN, smart_api
-    if not IS_ANGEL_LOGGED_IN:
-        if not init_angel_one():
-            return pd.DataFrame()
-
-    try:
-        token_info = ANGEL_TOKENS.get(symbol.upper())
-        if not token_info:
-            return pd.DataFrame()
-
-        tz = pytz.timezone("Asia/Kolkata")
-        now = datetime.now(tz)
-        from_date = now.strftime("%Y-%m-%d 09:15")
-        to_date = now.strftime("%Y-%m-%d %H:%M")
-
-        historicParam = {
-            "exchange": token_info["exchange"],
-            "symboltoken": token_info["token"],
-            "interval": "FIVE_MINUTE",
-            "fromdate": from_date,
-            "todate": to_date,
-        }
-
-        response = smart_api.getCandleData(historicParam)
-        if response and response.get("status") and response.get("data"):
-            candles = response["data"]
-            df = pd.DataFrame(candles, columns=["time", "open", "high", "low", "close", "volume"])
-            df["time"] = pd.to_datetime(df["time"])
-            logging.info(f"✅ Data fetched from PRIMARY Source: Angel One ({symbol})")
-            return df
-    except Exception as e:
-        logging.error(f"⚠️ Angel One Candle Fetch Failed: {e}")
-        IS_ANGEL_LOGGED_IN = False
-    return pd.DataFrame()
-
-
-# --- SOURCE 2: Yahoo Finance API ---
+# --- SOURCE 1: Yahoo Finance API ---
 def fetch_yahoo_candles(ticker, interval="5m", period="1d"):
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range={period}"
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -214,7 +138,7 @@ def fetch_yahoo_candles(ticker, interval="5m", period="1d"):
                 "volume": quotes.get("volume", [1] * len(timestamps)),
             }
         ).dropna()
-        logging.info(f"✅ Data fetched from FALLBACK 1 Source: Yahoo Finance ({ticker})")
+        logging.info(f"✅ Data fetched from PRIMARY Source: Yahoo Finance ({ticker})")
         return df
     except Exception:
         try:
@@ -234,13 +158,13 @@ def fetch_yahoo_candles(ticker, interval="5m", period="1d"):
                     "volume": quotes.get("volume", [1] * len(timestamps)),
                 }
             ).dropna()
-            logging.info(f"✅ Data fetched from FALLBACK 1 Source: Yahoo Finance 5D ({ticker})")
+            logging.info(f"✅ Data fetched from PRIMARY Source: Yahoo Finance 5D ({ticker})")
             return df
         except Exception:
             return pd.DataFrame()
 
 
-# --- SOURCE 3: Google Finance Scraping ---
+# --- SOURCE 2: Google Finance Scraping ---
 def fetch_google_finance_price(symbol):
     ticker_map = {
         "NIFTY": "NIFTY_50:INDEXNSE",
@@ -268,29 +192,26 @@ def fetch_google_finance_price(symbol):
                 "close": prices,
                 "volume": [1000] * 20
             })
-            logging.info(f"✅ Data fetched from FALLBACK 2 Source: Google Finance ({symbol})")
+            logging.info(f"✅ Data fetched from FALLBACK Source: Google Finance ({symbol})")
             return df
     except Exception as e:
         logging.error(f"⚠️ Google Finance Scraping Failed: {e}")
     return pd.DataFrame()
 
 
-# --- MULTI-SOURCE DATA PIPELINE ---
+# --- DUAL DATA PIPELINE ---
 def get_market_data(symbol="NIFTY"):
-    df = pd.DataFrame()
+    ticker = "^NSEI" if symbol == "NIFTY" else ("^BSESN" if symbol == "SENSEX" else f"{symbol}.NS")
+    
+    # 1. Try Yahoo Finance
+    df = fetch_yahoo_candles(ticker)
 
-    if symbol in ["NIFTY", "SENSEX"]:
-        df = fetch_angel_candles(symbol)
-
-    if df.empty or len(df) < 10:
-        ticker = "^NSEI" if symbol == "NIFTY" else ("^BSESN" if symbol == "SENSEX" else f"{symbol}.NS")
-        df = fetch_yahoo_candles(ticker)
-
+    # 2. Try Google Finance Fallback
     if df.empty or len(df) < 10:
         df = fetch_google_finance_price(symbol)
 
     if df.empty or len(df) < 10:
-        logging.error(f"❌ All 3 sources failed to retrieve data for {symbol}.")
+        logging.error(f"❌ Both sources failed to retrieve data for {symbol}.")
         return None
 
     df["ema_9"] = df["close"].ewm(span=9, adjust=False).mean()
@@ -303,7 +224,7 @@ def get_market_data(symbol="NIFTY"):
 
 
 # ==========================================
-# 7. STOCK SCALP ANALYSIS ENGINE
+# 6. STOCK SCALP ANALYSIS ENGINE
 # ==========================================
 def analyze_stock_scalp(stock_symbol):
     clean_symbol = stock_symbol.strip().upper().replace(".NS", "")
@@ -359,7 +280,7 @@ def analyze_stock_scalp(stock_symbol):
 
 
 # ==========================================
-# 8. INDEX SCANNER ENGINE (NIFTY & SENSEX)
+# 7. INDEX SCANNER ENGINE (NIFTY & SENSEX)
 # ==========================================
 def scan_index_market(symbol="NIFTY"):
     global ACTIVE_TRADES, LATEST_DATA, JOURNAL_TRADES
@@ -474,7 +395,7 @@ def scan_index_market(symbol="NIFTY"):
 
 
 # ==========================================
-# 9. EOD ANALYSIS REPORT (10 PM IST)
+# 8. EOD ANALYSIS REPORT (10 PM IST)
 # ==========================================
 def generate_eod_report():
     global EOD_REPORT_SENT
@@ -508,7 +429,7 @@ def generate_eod_report():
 
 
 # ==========================================
-# 10. TELEGRAM HANDLERS
+# 9. TELEGRAM HANDLERS
 # ==========================================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global IS_BOT_ACTIVE
@@ -619,24 +540,23 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ==========================================
-# 11. BACKGROUND SCANNER THREAD
+# 10. BACKGROUND SCANNER THREAD
 # ==========================================
 def background_scanner():
-    init_angel_one()
     while True:
         try:
             if IS_BOT_ACTIVE:
                 scan_index_market("NIFTY")
                 scan_index_market("SENSEX")
                 generate_eod_report()
-            time.sleep(10)
+            time.sleep(15)  # Fetch every 15 seconds safely
         except Exception as e:
             logging.error(f"⚠️ Background Loop Exception: {e}")
-            time.sleep(10)
+            time.sleep(15)
 
 
 # ==========================================
-# 12. MAIN EXECUTION
+# 11. MAIN EXECUTION
 # ==========================================
 if __name__ == "__main__":
     logging.info("🚀 Master Option & Stock Scalper Bot (Render Mode) ആരംഭിക്കുന്നു...")
