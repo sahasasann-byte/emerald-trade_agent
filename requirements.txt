@@ -7,3 +7,4 @@ pyotp
 smartapi-python
 python-telegram-bot
 beautifulsoup4
+logzero
