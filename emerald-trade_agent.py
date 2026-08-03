@@ -25,7 +25,6 @@ from telegram.ext import (
 # ==========================================
 app_flask = Flask(__name__)
 
-# Render നൽകുന്ന URL നിങ്ങളുടെ ആപ്പ് ഡാഷ്‌ബോർഡിൽ നിന്ന് എടുത്ത് ഇവിടെ നൽകാം
 RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "http://127.0.0.1:8080")
 
 @app_flask.route("/")
@@ -33,13 +32,11 @@ def home():
     return "🚀 Trading Bot Web Server is Active & Running 24/7!"
 
 def run_flask():
-    """Render-ന് ആവശ്യമായ ഡമ്മി പോർട്ട് ബൈൻഡിംഗ്"""
     port = int(os.environ.get("PORT", 8080))
     app_flask.run(host="0.0.0.0", port=port)
 
 def self_ping():
-    """ഓരോ 10 മിനിറ്റിലും ബോട്ട് സ്വയം Ping ചെയ്ത് Sleep Mode ഒഴിവാക്കുന്നു"""
-    time.sleep(30) # Server Start ആകുന്നതുവരെ കാത്തിരിക്കുന്നു
+    time.sleep(30)
     while True:
         try:
             url = RENDER_EXTERNAL_URL
@@ -47,7 +44,7 @@ def self_ping():
             requests.get(url, timeout=10)
         except Exception as e:
             print(f"⚠️ Self-Ping Warning: {e}")
-        time.sleep(600) # 10 മിനിറ്റ് (600 സെക്കൻഡ്) വിടവ്
+        time.sleep(600) # 10 Minutes
 
 
 # ==========================================
@@ -62,13 +59,12 @@ ANGEL_CLIENT_CODE = os.environ.get("ANGEL_CLIENT_CODE", "S62895445")
 ANGEL_PIN = os.environ.get("ANGEL_PIN", "4482")
 TOTP_SECRET = os.environ.get("TOTP_SECRET", "MTLSL363M22F5VIZY574XRFYXU")
 
-# Global System Variables
 IS_BOT_ACTIVE = True
 EOD_REPORT_SENT = False
 
 LATEST_DATA = {
-    "NIFTY": {"spot": 0.0, "vwap": 0.0, "ema9": 0.0, "ema20": 0.0, "status": "തുടങ്ങിയിട്ടില്ല"},
-    "SENSEX": {"spot": 0.0, "vwap": 0.0, "ema9": 0.0, "ema20": 0.0, "status": "തുടങ്ങിയിട്ടില്ല"},
+    "NIFTY": {"spot": 0.0, "vwap": 0.0, "ema9": 0.0, "ema20": 0.0, "status": "വിശകലനം ചെയ്യുന്നു..."},
+    "SENSEX": {"spot": 0.0, "vwap": 0.0, "ema9": 0.0, "ema20": 0.0, "status": "വിശകലനം ചെയ്യുന്നു..."},
 }
 
 ACTIVE_TRADES = {
@@ -81,14 +77,15 @@ smart_api = None
 
 
 # ==========================================
-# 3. MARKET HOURS CHECKER
+# 3. TIMEZONE-LOCKED MARKET HOURS CHECKER
 # ==========================================
 def is_market_open():
-    """ഇന്ത്യൻ മാർക്കറ്റ് സമയം പരിശോധിക്കുന്നു (Mon-Fri, 9:15 AM to 3:30 PM IST)"""
+    """Render UTC സിസ്റ്റത്തിലും കൃത്യമായി IST (Asia/Kolkata) സമയം ലോഗ് ചെയ്യുന്നു"""
     tz = pytz.timezone("Asia/Kolkata")
     now = datetime.now(tz)
     
-    if now.weekday() >= 5: # Saturday/Sunday
+    # Saturday (5), Sunday (6) Check
+    if now.weekday() >= 5:
         return False
         
     market_start = now.replace(hour=9, minute=15, second=0, microsecond=0)
@@ -101,14 +98,12 @@ def is_market_open():
 # 4. TELEGRAM ALERT DISPATCHER
 # ==========================================
 def send_telegram_alert(message):
-    """Sends clean, formatted Malayalam alerts to Telegram."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
         "parse_mode": "Markdown",
     }
-
     try:
         requests.post(url, json=payload, timeout=10)
     except Exception as e:
@@ -159,7 +154,7 @@ def fetch_yahoo_candles(ticker, interval="5m", period="1d"):
         ).dropna()
         return df
     except Exception:
-        # Weekend Fix (1d ലഭിച്ചില്ലെങ്കിൽ 5d ഡാറ്റ എടുക്കും)
+        # Fallback to 5d range if 1d has fetch lag
         try:
             url_fallback = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range=5d"
             res = requests.get(url_fallback, headers=headers, timeout=10)
@@ -202,7 +197,6 @@ def get_market_data(symbol="NIFTY"):
 # 7. STOCK SCALP ANALYSIS ENGINE
 # ==========================================
 def analyze_stock_scalp(stock_symbol):
-    """ഏത് സ്റ്റോക്കിന്റെയും തത്സമയ 1:1.8 RR വിശകലനം നൽകുന്നു."""
     clean_symbol = stock_symbol.strip().upper().replace(".NS", "")
     df = get_market_data(clean_symbol)
 
@@ -214,7 +208,6 @@ def analyze_stock_scalp(stock_symbol):
     ema_20 = round(df["ema_20"].iloc[-1], 2)
     vwap = round(df["vwap"].iloc[-1], 2)
 
-    # Choppy Check
     ema_diff_pct = abs(ema_9 - ema_20) / curr_price * 100
     if ema_diff_pct < 0.15:
         return (
@@ -224,7 +217,7 @@ def analyze_stock_scalp(stock_symbol):
             f"⚠️ *മാർക്കറ്റ് ചോപ്പിയാണ് (Choppy Market), ഈ സ്റ്റോക്കിൽ ട്രേഡ് ഒഴിവാക്കുന്നു ⏸️*"
         )
 
-    # Bullish Signal (1:1.8 Risk Reward)
+    # 1:1.8 Risk Reward Signals
     if curr_price > vwap and ema_9 > ema_20:
         sl = round(ema_20, 2)
         risk = round(curr_price - sl, 2)
@@ -237,7 +230,6 @@ def analyze_stock_scalp(stock_symbol):
             f"💡 *വിശകലനം:* ട്രെൻഡ് ബുള്ളിഷ് ആണ്. പ്രൈസ് VWAP-നും 9 EMA-യ്ക്കും മുകളിലാണ്."
         )
 
-    # Bearish Signal (1:1.8 Risk Reward)
     elif curr_price < vwap and ema_9 < ema_20:
         sl = round(ema_20, 2)
         risk = round(sl - curr_price, 2)
@@ -254,12 +246,12 @@ def analyze_stock_scalp(stock_symbol):
         f"📊 *STOCK ANALYSIS: {clean_symbol}*\n\n"
         f"• Live Price: *₹{curr_price:,.2f}*\n"
         f"• VWAP: *₹{vwap}*\n\n"
-        f"⏸️ *വ്യക്തമായ എൻട്രി സിഗ്നൽ ഇല്ല. വിപണി വിശകലനം ചെയ്യുന്നു...*"
+        f"⏸️ *വ്യക്തമായ എൻട്രി സിഗ്നൽ ഇല്ല. വിപണി കാണുന്നു...*"
     )
 
 
 # ==========================================
-# 8. INDEX SCANNER ENGINE (NIFTY & SENSEX - 1:1.8 RR)
+# 8. INDEX SCANNER ENGINE (NIFTY & SENSEX)
 # ==========================================
 def scan_index_market(symbol="NIFTY"):
     global ACTIVE_TRADES, LATEST_DATA, JOURNAL_TRADES
@@ -280,7 +272,6 @@ def scan_index_market(symbol="NIFTY"):
     strike_step = 50 if symbol == "NIFTY" else 100
     atm_strike = round(curr_spot / strike_step) * strike_step
 
-    # Choppy Condition Check
     ema_spread = abs(ema_9 - ema_20) / curr_spot * 100
     is_choppy = ema_spread < 0.10
 
@@ -294,7 +285,7 @@ def scan_index_market(symbol="NIFTY"):
 
     active = ACTIVE_TRADES[symbol]
 
-    # --- EXIT & TARGET / STOP-LOSS NOTIFICATIONS ---
+    # Exit Management
     if active:
         target_spot = active["target_spot"]
         sl_spot = active["sl_spot"]
@@ -323,16 +314,15 @@ def scan_index_market(symbol="NIFTY"):
             ACTIVE_TRADES[symbol] = None
         return
 
-    # --- ENTRY SCANNER ---
     if is_choppy:
         return
 
-    # 1:1.8 Risk-Reward Calculation
+    # 1:1.8 Risk Reward Setup
     rr_multiplier = 1.8
     risk_pts = 15.0 if symbol == "NIFTY" else 45.0
     reward_pts = risk_pts * rr_multiplier
 
-    # BULLISH CALL BUY
+    # CALL BUY
     if curr_spot > vwap and ema_9 > ema_20:
         target_spot = round(curr_spot + reward_pts, 2)
         sl_spot = round(curr_spot - risk_pts, 2)
@@ -355,7 +345,7 @@ def scan_index_market(symbol="NIFTY"):
         )
         send_telegram_alert(msg)
 
-    # BEARISH PUT BUY
+    # PUT BUY
     elif curr_spot < vwap and ema_9 < ema_20:
         target_spot = round(curr_spot - reward_pts, 2)
         sl_spot = round(curr_spot + risk_pts, 2)
@@ -473,10 +463,10 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"• Strike: *{t['strike']}*\n"
                 f"• Entry Spot: *₹{t['entry_spot']:,.2f}*\n"
                 f"• Target Spot: *₹{t['target_spot']:,.2f}*\n"
-                f"• Stop Loss Spot: *₹{sl_spot:,.2f}*"
+                f"• Stop Loss Spot: *₹{t['sl_spot']:,.2f}*"
             )
         else:
-            msg = f"⏸️ *{sym}* - ആക്റ്റീവ് ട്രേഡുകൾ ഒന്നുമില്ല, വിപണി വിശകലനം ചെയ്യുന്നു..."
+            msg = f"⏸️ *{sym}* - ആക്റ്റീവ് ട്രേഡുകൾ ഒന്നുമില്ല, വിപണി കാണുന്നു..."
         await update.message.reply_text(msg, parse_mode="Markdown")
 
     elif text in ["NNN", "SSS"]:
@@ -519,7 +509,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg, parse_mode="Markdown")
 
     else:
-        # Stock Search Handler
         await update.message.reply_text(f"🔍 *{text}* വിപണി വിശകലനം ചെയ്യുന്നു...", parse_mode="Markdown")
         response = analyze_stock_scalp(text)
         await update.message.reply_text(response, parse_mode="Markdown")
@@ -543,24 +532,20 @@ def background_scanner():
 
 
 # ==========================================
-# 12. MAIN EXECUTION POINT
+# 12. MAIN EXECUTION
 # ==========================================
 if __name__ == "__main__":
     print("🚀 Master Option & Stock Scalper Bot (Render Mode) ആരംഭിക്കുന്നു...")
 
-    # 1. Flask Dummy Web Server Start ചെയ്യുന്നു (Port Binding)
     t_flask = threading.Thread(target=run_flask, daemon=True)
     t_flask.start()
 
-    # 2. Self-Ping Keep-Alive Start ചെയ്യുന്നു (Sleep Mode തടയാൻ)
     t_ping = threading.Thread(target=self_ping, daemon=True)
     t_ping.start()
 
-    # 3. Background Market Scanner Start ചെയ്യുന്നു
     t_scan = threading.Thread(target=background_scanner, daemon=True)
     t_scan.start()
 
-    # 4. Telegram Bot Start ചെയ്യുന്നു
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), text_handler))
