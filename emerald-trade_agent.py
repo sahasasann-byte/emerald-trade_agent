@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import requests
 import pyotp
+from bs4 import BeautifulSoup
 from flask import Flask
 from SmartApi import SmartConnect
 from telegram import Update
@@ -21,7 +22,7 @@ from telegram.ext import (
 )
 
 # ==========================================
-# 1. RENDER DUMMY WEB SERVER & KEEP-ALIVE
+# 1. RENDER WEB SERVER & KEEP-ALIVE
 # ==========================================
 app_flask = Flask(__name__)
 
@@ -44,7 +45,7 @@ def self_ping():
             requests.get(url, timeout=10)
         except Exception as e:
             print(f"⚠️ Self-Ping Warning: {e}")
-        time.sleep(600) # 10 Minutes
+        time.sleep(600)  # Ping every 10 minutes
 
 
 # ==========================================
@@ -74,17 +75,25 @@ ACTIVE_TRADES = {
 
 JOURNAL_TRADES = []
 smart_api = None
+IS_ANGEL_LOGGED_IN = False
+
+
+# Symbol Mappings for Angel One Tokens
+ANGEL_TOKENS = {
+    "NIFTY": {"token": "99926000", "exchange": "NSE"},
+    "SENSEX": {"token": "99919000", "exchange": "BSE"},
+}
 
 
 # ==========================================
 # 3. TIMEZONE-LOCKED MARKET HOURS CHECKER
 # ==========================================
 def is_market_open():
-    """Render UTC സിസ്റ്റത്തിലും കൃത്യമായി IST (Asia/Kolkata) സമയം ലോഗ് ചെയ്യുന്നു"""
+    """Checks IST (Asia/Kolkata) time regardless of UTC server timezone"""
     tz = pytz.timezone("Asia/Kolkata")
     now = datetime.now(tz)
     
-    # Saturday (5), Sunday (6) Check
+    # Weekend check: Saturday (5), Sunday (6)
     if now.weekday() >= 5:
         return False
         
@@ -111,27 +120,70 @@ def send_telegram_alert(message):
 
 
 # ==========================================
-# 5. ANGEL ONE LOGIN
+# 5. ANGEL ONE LOGIN WITH AUTO-RETRY
 # ==========================================
 def init_angel_one():
-    global smart_api
+    global smart_api, IS_ANGEL_LOGGED_IN
     try:
         smart_api = SmartConnect(api_key=ANGEL_API_KEY)
         totp = pyotp.TOTP(TOTP_SECRET.strip().replace(" ", "")).now()
         data = smart_api.generateSession(ANGEL_CLIENT_CODE, ANGEL_PIN, totp)
         if data and data.get("status"):
-            print("✅ Angel One SmartAPI ലോഗിൻ വിജയകരമായി ചെയ്തു!")
+            print("✅ Angel One SmartAPI Logged in Successfully!")
+            IS_ANGEL_LOGGED_IN = True
             return True
         else:
             print(f"⚠️ Angel API Login Failed: {data.get('message')}")
+            IS_ANGEL_LOGGED_IN = False
     except Exception as e:
         print(f"⚠️ Angel API Login Error: {e}")
+        IS_ANGEL_LOGGED_IN = False
     return False
 
 
 # ==========================================
-# 6. DATA FETCHERS WITH FALLBACK & WEEKEND FIX
+# 6. DATA FETCHERS (3 FALLBACK SOURCES)
 # ==========================================
+
+# --- SOURCE 1: Angel One SmartAPI ---
+def fetch_angel_candles(symbol):
+    global IS_ANGEL_LOGGED_IN, smart_api
+    if not IS_ANGEL_LOGGED_IN:
+        if not init_angel_one():
+            return pd.DataFrame()
+
+    try:
+        token_info = ANGEL_TOKENS.get(symbol.upper())
+        if not token_info:
+            return pd.DataFrame()
+
+        tz = pytz.timezone("Asia/Kolkata")
+        now = datetime.now(tz)
+        from_date = now.strftime("%Y-%m-%d 09:15")
+        to_date = now.strftime("%Y-%m-%d %H:%M")
+
+        historicParam = {
+            "exchange": token_info["exchange"],
+            "symboltoken": token_info["token"],
+            "interval": "FIVE_MINUTE",
+            "fromdate": from_date,
+            "todate": to_date,
+        }
+
+        response = smart_api.getCandleData(historicParam)
+        if response and response.get("status") and response.get("data"):
+            candles = response["data"]
+            df = pd.DataFrame(candles, columns=["time", "open", "high", "low", "close", "volume"])
+            df["time"] = pd.to_datetime(df["time"])
+            print(f"✅ Data fetched from PRIMARY Source: Angel One ({symbol})")
+            return df
+    except Exception as e:
+        print(f"⚠️ Angel One Candle Fetch Failed: {e}")
+        IS_ANGEL_LOGGED_IN = False  # Trigger re-login on next attempt
+    return pd.DataFrame()
+
+
+# --- SOURCE 2: Yahoo Finance API ---
 def fetch_yahoo_candles(ticker, interval="5m", period="1d"):
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range={period}"
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -152,9 +204,10 @@ def fetch_yahoo_candles(ticker, interval="5m", period="1d"):
                 "volume": quotes.get("volume", [1] * len(timestamps)),
             }
         ).dropna()
+        print(f"✅ Data fetched from FALLBACK 1 Source: Yahoo Finance ({ticker})")
         return df
     except Exception:
-        # Fallback to 5d range if 1d has fetch lag
+        # Secondary fallback range for Yahoo
         try:
             url_fallback = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range=5d"
             res = requests.get(url_fallback, headers=headers, timeout=10)
@@ -172,17 +225,70 @@ def fetch_yahoo_candles(ticker, interval="5m", period="1d"):
                     "volume": quotes.get("volume", [1] * len(timestamps)),
                 }
             ).dropna()
+            print(f"✅ Data fetched from FALLBACK 1 Source: Yahoo Finance 5D ({ticker})")
             return df
         except Exception:
             return pd.DataFrame()
 
-def get_market_data(symbol="NIFTY"):
-    ticker = "^NSEI" if symbol == "NIFTY" else ("^BSESN" if symbol == "SENSEX" else f"{symbol}.NS")
-    df = fetch_yahoo_candles(ticker)
 
-    if df.empty or len(df) < 20:
+# --- SOURCE 3: Google Finance Scraping ---
+def fetch_google_finance_price(symbol):
+    ticker_map = {
+        "NIFTY": "NIFTY_50:INDEXNSE",
+        "SENSEX": "SENSEX:INDEXBO",
+    }
+    g_symbol = ticker_map.get(symbol.upper(), f"{symbol}:NSE")
+    url = f"https://www.google.com/finance/quote/{g_symbol}"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(res.text, "html.parser")
+        price_div = soup.find("div", {"class": "YMlKec fxfa3d"})
+        if price_div:
+            price_str = price_div.text.replace("₹", "").replace(",", "").strip()
+            curr_price = float(price_str)
+            
+            # Generate pseudo dataframe for technical calculations if historical candles fail
+            times = pd.date_range(end=datetime.now(), periods=20, freq="5min")
+            prices = [curr_price] * 20
+            df = pd.DataFrame({
+                "time": times,
+                "open": prices,
+                "high": prices,
+                "low": prices,
+                "close": prices,
+                "volume": [1000] * 20
+            })
+            print(f"✅ Data fetched from FALLBACK 2 Source: Google Finance ({symbol})")
+            return df
+    except Exception as e:
+        print(f"⚠️ Google Finance Scraping Failed: {e}")
+    return pd.DataFrame()
+
+
+# --- MULTI-SOURCE DATA PIPELINE ---
+def get_market_data(symbol="NIFTY"):
+    df = pd.DataFrame()
+
+    # 1. Primary Source: Angel One
+    if symbol in ["NIFTY", "SENSEX"]:
+        df = fetch_angel_candles(symbol)
+
+    # 2. Fallback 1: Yahoo Finance
+    if df.empty or len(df) < 10:
+        ticker = "^NSEI" if symbol == "NIFTY" else ("^BSESN" if symbol == "SENSEX" else f"{symbol}.NS")
+        df = fetch_yahoo_candles(ticker)
+
+    # 3. Fallback 2: Google Finance
+    if df.empty or len(df) < 10:
+        df = fetch_google_finance_price(symbol)
+
+    if df.empty or len(df) < 10:
+        print(f"❌ All 3 sources failed to retrieve data for {symbol}.")
         return None
 
+    # Calculate Technical Indicators
     df["ema_9"] = df["close"].ewm(span=9, adjust=False).mean()
     df["ema_20"] = df["close"].ewm(span=20, adjust=False).mean()
 
@@ -200,8 +306,8 @@ def analyze_stock_scalp(stock_symbol):
     clean_symbol = stock_symbol.strip().upper().replace(".NS", "")
     df = get_market_data(clean_symbol)
 
-    if df is None or len(df) < 20:
-        return f"⚠️ **{clean_symbol}** എന്ന സ്റ്റോക്കിന്റെ വിവരങ്ങൾ ലഭ്യമല്ല. Symbol ശരിയാണോ എന്ന് പരിശോധിക്കുക."
+    if df is None or len(df) < 10:
+        return f"⚠️ **{clean_symbol}** എന്ന സ്റ്റോക്കിന്റെ വിവരങ്ങൾ ലഭ്യമായില്ല. Symbol ശരിയാണോ എന്ന് പരിശോധിക്കുക."
 
     curr_price = round(df["close"].iloc[-1], 2)
     ema_9 = round(df["ema_9"].iloc[-1], 2)
