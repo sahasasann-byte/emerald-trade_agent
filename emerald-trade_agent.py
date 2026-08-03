@@ -1,6 +1,5 @@
 import asyncio
 import os
-import sys
 import threading
 import time
 from datetime import datetime
@@ -8,10 +7,8 @@ import pytz
 import numpy as np
 import pandas as pd
 import requests
-import pyotp
 from bs4 import BeautifulSoup
 from flask import Flask
-from SmartApi import SmartConnect
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -49,16 +46,10 @@ def self_ping():
 
 
 # ==========================================
-# 2. CONFIGURATION & CREDENTIALS
+# 2. CONFIGURATION & ENVIRONMENT VARIABLES
 # ==========================================
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8866649004:AAHuRrhqCHqRq0Ucb1i_UyTCG2B5nKOCkps")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "5944911045")
-
-# Angel One Credentials
-ANGEL_API_KEY = os.environ.get("ANGEL_API_KEY", "dvQFbsAJ")
-ANGEL_CLIENT_CODE = os.environ.get("ANGEL_CLIENT_CODE", "S62895445")
-ANGEL_PIN = os.environ.get("ANGEL_PIN", "4482")
-TOTP_SECRET = os.environ.get("TOTP_SECRET", "MTLSL363M22F5VIZY574XRFYXU")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN_HERE")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "YOUR_TELEGRAM_CHAT_ID_HERE")
 
 IS_BOT_ACTIVE = True
 EOD_REPORT_SENT = False
@@ -74,15 +65,6 @@ ACTIVE_TRADES = {
 }
 
 JOURNAL_TRADES = []
-smart_api = None
-IS_ANGEL_LOGGED_IN = False
-
-
-# Symbol Mappings for Angel One Tokens
-ANGEL_TOKENS = {
-    "NIFTY": {"token": "99926000", "exchange": "NSE"},
-    "SENSEX": {"token": "99919000", "exchange": "BSE"},
-}
 
 
 # ==========================================
@@ -120,73 +102,13 @@ def send_telegram_alert(message):
 
 
 # ==========================================
-# 5. ANGEL ONE LOGIN WITH AUTO-RETRY
-# ==========================================
-def init_angel_one():
-    global smart_api, IS_ANGEL_LOGGED_IN
-    try:
-        smart_api = SmartConnect(api_key=ANGEL_API_KEY)
-        totp = pyotp.TOTP(TOTP_SECRET.strip().replace(" ", "")).now()
-        data = smart_api.generateSession(ANGEL_CLIENT_CODE, ANGEL_PIN, totp)
-        if data and data.get("status"):
-            print("✅ Angel One SmartAPI Logged in Successfully!")
-            IS_ANGEL_LOGGED_IN = True
-            return True
-        else:
-            print(f"⚠️ Angel API Login Failed: {data.get('message')}")
-            IS_ANGEL_LOGGED_IN = False
-    except Exception as e:
-        print(f"⚠️ Angel API Login Error: {e}")
-        IS_ANGEL_LOGGED_IN = False
-    return False
-
-
-# ==========================================
-# 6. DATA FETCHERS (3 FALLBACK SOURCES)
+# 5. DATA FETCHERS (PRIMARY & FALLBACK SOURCES)
 # ==========================================
 
-# --- SOURCE 1: Angel One SmartAPI ---
-def fetch_angel_candles(symbol):
-    global IS_ANGEL_LOGGED_IN, smart_api
-    if not IS_ANGEL_LOGGED_IN:
-        if not init_angel_one():
-            return pd.DataFrame()
-
-    try:
-        token_info = ANGEL_TOKENS.get(symbol.upper())
-        if not token_info:
-            return pd.DataFrame()
-
-        tz = pytz.timezone("Asia/Kolkata")
-        now = datetime.now(tz)
-        from_date = now.strftime("%Y-%m-%d 09:15")
-        to_date = now.strftime("%Y-%m-%d %H:%M")
-
-        historicParam = {
-            "exchange": token_info["exchange"],
-            "symboltoken": token_info["token"],
-            "interval": "FIVE_MINUTE",
-            "fromdate": from_date,
-            "todate": to_date,
-        }
-
-        response = smart_api.getCandleData(historicParam)
-        if response and response.get("status") and response.get("data"):
-            candles = response["data"]
-            df = pd.DataFrame(candles, columns=["time", "open", "high", "low", "close", "volume"])
-            df["time"] = pd.to_datetime(df["time"])
-            print(f"✅ Data fetched from PRIMARY Source: Angel One ({symbol})")
-            return df
-    except Exception as e:
-        print(f"⚠️ Angel One Candle Fetch Failed: {e}")
-        IS_ANGEL_LOGGED_IN = False  # Trigger re-login on next attempt
-    return pd.DataFrame()
-
-
-# --- SOURCE 2: Yahoo Finance API ---
+# --- SOURCE 1: Yahoo Finance API ---
 def fetch_yahoo_candles(ticker, interval="5m", period="1d"):
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range={period}"
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
     try:
         res = requests.get(url, headers=headers, timeout=10)
@@ -201,13 +123,13 @@ def fetch_yahoo_candles(ticker, interval="5m", period="1d"):
                 "high": quotes["high"],
                 "low": quotes["low"],
                 "close": quotes["close"],
-                "volume": quotes.get("volume", [1] * len(timestamps)),
+                "volume": quotes.get("volume", [1000] * len(timestamps)),
             }
         ).dropna()
-        print(f"✅ Data fetched from FALLBACK 1 Source: Yahoo Finance ({ticker})")
+        print(f"✅ Data fetched from PRIMARY Source: Yahoo Finance ({ticker})")
         return df
     except Exception:
-        # Secondary fallback range for Yahoo
+        # Secondary range fallback for Yahoo Finance
         try:
             url_fallback = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range=5d"
             res = requests.get(url_fallback, headers=headers, timeout=10)
@@ -222,16 +144,16 @@ def fetch_yahoo_candles(ticker, interval="5m", period="1d"):
                     "high": quotes["high"],
                     "low": quotes["low"],
                     "close": quotes["close"],
-                    "volume": quotes.get("volume", [1] * len(timestamps)),
+                    "volume": quotes.get("volume", [1000] * len(timestamps)),
                 }
             ).dropna()
-            print(f"✅ Data fetched from FALLBACK 1 Source: Yahoo Finance 5D ({ticker})")
+            print(f"✅ Data fetched from PRIMARY Source: Yahoo Finance 5D ({ticker})")
             return df
         except Exception:
             return pd.DataFrame()
 
 
-# --- SOURCE 3: Google Finance Scraping ---
+# --- SOURCE 2: Google Finance Scraping ---
 def fetch_google_finance_price(symbol):
     ticker_map = {
         "NIFTY": "NIFTY_50:INDEXNSE",
@@ -249,7 +171,7 @@ def fetch_google_finance_price(symbol):
             price_str = price_div.text.replace("₹", "").replace(",", "").strip()
             curr_price = float(price_str)
             
-            # Generate pseudo dataframe for technical calculations if historical candles fail
+            # Generate temporary data structure for indicator calculations
             times = pd.date_range(end=datetime.now(), periods=20, freq="5min")
             prices = [curr_price] * 20
             df = pd.DataFrame({
@@ -260,7 +182,7 @@ def fetch_google_finance_price(symbol):
                 "close": prices,
                 "volume": [1000] * 20
             })
-            print(f"✅ Data fetched from FALLBACK 2 Source: Google Finance ({symbol})")
+            print(f"✅ Data fetched from FALLBACK Source: Google Finance ({symbol})")
             return df
     except Exception as e:
         print(f"⚠️ Google Finance Scraping Failed: {e}")
@@ -271,42 +193,45 @@ def fetch_google_finance_price(symbol):
 def get_market_data(symbol="NIFTY"):
     df = pd.DataFrame()
 
-    # 1. Primary Source: Angel One
-    if symbol in ["NIFTY", "SENSEX"]:
-        df = fetch_angel_candles(symbol)
+    # Determine ticker format
+    if symbol == "NIFTY":
+        ticker = "^NSEI"
+    elif symbol == "SENSEX":
+        ticker = "^BSESN"
+    else:
+        ticker = f"{symbol}.NS"
 
-    # 2. Fallback 1: Yahoo Finance
-    if df.empty or len(df) < 10:
-        ticker = "^NSEI" if symbol == "NIFTY" else ("^BSESN" if symbol == "SENSEX" else f"{symbol}.NS")
-        df = fetch_yahoo_candles(ticker)
+    # 1. Fetch from Yahoo Finance
+    df = fetch_yahoo_candles(ticker)
 
-    # 3. Fallback 2: Google Finance
-    if df.empty or len(df) < 10:
+    # 2. Fallback to Google Finance Scraping
+    if df.empty or len(df) < 5:
         df = fetch_google_finance_price(symbol)
 
-    if df.empty or len(df) < 10:
-        print(f"❌ All 3 sources failed to retrieve data for {symbol}.")
+    if df.empty or len(df) < 5:
+        print(f"❌ All sources failed to retrieve data for {symbol}.")
         return None
 
-    # Calculate Technical Indicators
+    # Technical Indicators Calculations
     df["ema_9"] = df["close"].ewm(span=9, adjust=False).mean()
     df["ema_20"] = df["close"].ewm(span=20, adjust=False).mean()
 
     # VWAP Calculation
     df["tp"] = (df["high"] + df["low"] + df["close"]) / 3
-    df["vwap"] = (df["tp"] * df["volume"]).cumsum() / df["volume"].cumsum().replace(0, 1)
+    vol_sum = df["volume"].cumsum().replace(0, 1)
+    df["vwap"] = (df["tp"] * df["volume"]).cumsum() / vol_sum
 
     return df
 
 
 # ==========================================
-# 7. STOCK SCALP ANALYSIS ENGINE
+# 6. STOCK SCALP ANALYSIS ENGINE
 # ==========================================
 def analyze_stock_scalp(stock_symbol):
     clean_symbol = stock_symbol.strip().upper().replace(".NS", "")
     df = get_market_data(clean_symbol)
 
-    if df is None or len(df) < 10:
+    if df is None or len(df) < 5:
         return f"⚠️ **{clean_symbol}** എന്ന സ്റ്റോക്കിന്റെ വിവരങ്ങൾ ലഭ്യമായില്ല. Symbol ശരിയാണോ എന്ന് പരിശോധിക്കുക."
 
     curr_price = round(df["close"].iloc[-1], 2)
@@ -357,7 +282,7 @@ def analyze_stock_scalp(stock_symbol):
 
 
 # ==========================================
-# 8. INDEX SCANNER ENGINE (NIFTY & SENSEX)
+# 7. INDEX SCANNER ENGINE (NIFTY & SENSEX)
 # ==========================================
 def scan_index_market(symbol="NIFTY"):
     global ACTIVE_TRADES, LATEST_DATA, JOURNAL_TRADES
@@ -476,7 +401,7 @@ def scan_index_market(symbol="NIFTY"):
 
 
 # ==========================================
-# 9. EOD ANALYSIS REPORT (10 PM IST)
+# 8. EOD ANALYSIS REPORT (10 PM IST)
 # ==========================================
 def generate_eod_report():
     global EOD_REPORT_SENT
@@ -510,7 +435,7 @@ def generate_eod_report():
 
 
 # ==========================================
-# 10. TELEGRAM HANDLERS
+# 9. TELEGRAM HANDLERS
 # ==========================================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global IS_BOT_ACTIVE
@@ -621,10 +546,9 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ==========================================
-# 11. BACKGROUND SCANNER THREAD
+# 10. BACKGROUND SCANNER THREAD
 # ==========================================
 def background_scanner():
-    init_angel_one()
     while True:
         try:
             if IS_BOT_ACTIVE:
@@ -638,7 +562,7 @@ def background_scanner():
 
 
 # ==========================================
-# 12. MAIN EXECUTION
+# 11. MAIN EXECUTION
 # ==========================================
 if __name__ == "__main__":
     print("🚀 Master Option & Stock Scalper Bot (Render Mode) ആരംഭിക്കുന്നു...")
@@ -657,4 +581,4 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), text_handler))
 
     print("✅ Render Web Server & Telegram ബോട്ട് സംയോജനം പൂർത്തിയായി!")
-    app.run_polling()
+    asyncio.run(app.run_polling(close_loop=False))
