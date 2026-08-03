@@ -8,3 +8,4 @@ smartapi-python
 python-telegram-bot
 beautifulsoup4
 logzero
+websocket-client
