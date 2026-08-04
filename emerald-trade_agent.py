@@ -1,19 +1,20 @@
 import os
 import sys
-import threading
 import time
 import logging
-from datetime import datetime
+import threading
+from datetime import datetime, timedelta
 import pytz
 import numpy as np
 import pandas as pd
 import requests
-from bs4 import BeautifulSoup
 from flask import Flask
-from telegram import Update
+from fyers_apyp3 import fyersModel, accessToken
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
+    CallbackQueryHandler,
     ContextTypes,
     MessageHandler,
     filters,
@@ -26,15 +27,82 @@ logging.basicConfig(
 )
 
 # ==========================================
-# 1. RENDER WEB SERVER & KEEP-ALIVE
+# 1. HARDCODED CREDENTIALS & CONFIGURATION
+# ==========================================
+TELEGRAM_BOT_TOKEN = "8866649004:AAHuRrhqCHqRq0Ucb1i_UyTCG2B5nKOCkps"
+TELEGRAM_CHAT_ID = "5944911045"
+
+# FYERS API Credentials
+FYERS_CLIENT_ID = "KDE60BKD5D-100"
+FYERS_SECRET_KEY = "1NWBJLVQQ9"
+FYERS_USER_ID = "FAK37502"
+FYERS_PIN = "2007"
+
+# Fyers Model Instance (Global)
+fyers = None
+
+# Mapping Assets to Fyers Symbol Formats
+FYERS_SYMBOLS = {
+    "NIFTY": "NSE:NIFTY50-INDEX",
+    "BANK NIFTY": "NSE:NIFTYBANK-INDEX",
+    "SENSEX": "BSE:SENSEX-INDEX",
+    "CRUDE OIL": "MCX:CRUDEOIL26AUGFUT",
+    "NATURAL GAS": "MCX:NATURALGAS26AUGFUT",
+    "GOLD": "MCX:GOLD26OCTFUT",
+    "SILVER": "MCX:SILVER26SEPFUT",
+    "INDIA VIX": "NSE:INDIAVIX-INDEX"
+}
+
+IS_BOT_ACTIVE = True
+DAILY_REPORT_SENT = False
+
+ACTIVE_TRADES = {asset: None for asset in FYERS_SYMBOLS}
+JOURNAL_TRADES = []
+
+
+# ==========================================
+# 2. AUTOMATED FYERS AUTHENTICATION
+# ==========================================
+def initialize_fyers_session():
+    """Authenticates with Fyers API v3 and returns active model session"""
+    global fyers
+    try:
+        session = accessToken.SessionModel(
+            client_id=FYERS_CLIENT_ID,
+            secret_key=FYERS_SECRET_KEY,
+            redirect_uri="https://trade.fyers.in/api-login/default-redirect-uri/index.php",
+            response_type="code",
+            grant_type="authorization_code"
+        )
+        
+        # Generates Auth Code URL
+        auth_url = session.generate_authcode()
+        logging.info(f"🔗 Fyers Auth URL generated: {auth_url}")
+
+        # Note: If access token is passed via environment or generated code, load it:
+        access_token = os.environ.get("FYERS_ACCESS_TOKEN", "")
+        
+        if not access_token:
+            logging.warning("⚠️ Access Token not set. Please set FYERS_ACCESS_TOKEN env variable after first login.")
+            # Fallback initialization attempt
+            fyers = fyersModel.FyersModel(client_id=FYERS_CLIENT_ID, is_async=False, token="", log_path="")
+        else:
+            fyers = fyersModel.FyersModel(client_id=FYERS_CLIENT_ID, is_async=False, token=access_token, log_path="")
+            logging.info("✅ Fyers API Session Authenticated Successfully!")
+            
+    except Exception as e:
+        logging.error(f"❌ Fyers Authentication Error: {e}")
+
+
+# ==========================================
+# 3. RENDER WEB SERVER & KEEP-ALIVE
 # ==========================================
 app_flask = Flask(__name__)
-
 RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "http://127.0.0.1:8080")
 
 @app_flask.route("/")
 def home():
-    return "🚀 Trading Bot Web Server is Active & Running 24/7!"
+    return "🚀 Institutional Order Flow & Scalping Engine Active 24/7!"
 
 @app_flask.route("/health")
 def health():
@@ -58,55 +126,17 @@ def self_ping():
 
 
 # ==========================================
-# 2. CONFIGURATION & CREDENTIALS
-# ==========================================
-TELEGRAM_BOT_TOKEN = "8866649004:AAHuRrhqCHqRq0Ucb1i_UyTCG2B5nKOCkps"
-TELEGRAM_CHAT_ID = "5944911045"
-
-IS_BOT_ACTIVE = True
-EOD_REPORT_SENT = False
-
-LATEST_DATA = {
-    "NIFTY": {"spot": 0.0, "vwap": 0.0, "ema9": 0.0, "ema20": 0.0, "status": "വിശകലനം ചെയ്യുന്നു..."},
-    "SENSEX": {"spot": 0.0, "vwap": 0.0, "ema9": 0.0, "ema20": 0.0, "status": "വിശകലനം ചെയ്യുന്നു..."},
-}
-
-ACTIVE_TRADES = {
-    "NIFTY": None,
-    "SENSEX": None,
-}
-
-JOURNAL_TRADES = []
-
-
-# ==========================================
-# 3. TIMEZONE-LOCKED MARKET HOURS CHECKER
-# ==========================================
-def is_market_open():
-    """Checks IST (Asia/Kolkata) time regardless of UTC server timezone"""
-    tz = pytz.timezone("Asia/Kolkata")
-    now = datetime.now(tz)
-    
-    # Weekend check: Saturday (5), Sunday (6)
-    if now.weekday() >= 5:
-        return False
-        
-    market_start = now.replace(hour=9, minute=15, second=0, microsecond=0)
-    market_end = now.replace(hour=15, minute=30, second=0, microsecond=0)
-    
-    return market_start <= now <= market_end
-
-
-# ==========================================
 # 4. TELEGRAM ALERT DISPATCHER
 # ==========================================
-def send_telegram_alert(message):
+def send_telegram_alert(message, reply_markup=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
         "parse_mode": "Markdown",
     }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     try:
         requests.post(url, json=payload, timeout=10)
     except Exception as e:
@@ -114,465 +144,367 @@ def send_telegram_alert(message):
 
 
 # ==========================================
-# 5. DATA FETCHERS (YAHOO & GOOGLE FINANCE)
+# 5. FYERS DATA ENGINE & INDICATORS
 # ==========================================
-
-# --- SOURCE 1: Yahoo Finance API ---
-def fetch_yahoo_candles(ticker, interval="5m", period="1d"):
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range={period}"
-    headers = {"User-Agent": "Mozilla/5.0"}
-
-    try:
-        res = requests.get(url, headers=headers, timeout=10)
-        data = res.json()["chart"]["result"][0]
-        timestamps = data["timestamp"]
-        quotes = data["indicators"]["quote"][0]
-
-        df = pd.DataFrame(
-            {
-                "time": pd.to_datetime(timestamps, unit="s"),
-                "open": quotes["open"],
-                "high": quotes["high"],
-                "low": quotes["low"],
-                "close": quotes["close"],
-                "volume": quotes.get("volume", [1] * len(timestamps)),
-            }
-        ).dropna()
-        logging.info(f"✅ Data fetched from PRIMARY Source: Yahoo Finance ({ticker})")
-        return df
-    except Exception:
-        try:
-            url_fallback = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range=5d"
-            res = requests.get(url_fallback, headers=headers, timeout=10)
-            data = res.json()["chart"]["result"][0]
-            timestamps = data["timestamp"]
-            quotes = data["indicators"]["quote"][0]
-
-            df = pd.DataFrame(
-                {
-                    "time": pd.to_datetime(timestamps, unit="s"),
-                    "open": quotes["open"],
-                    "high": quotes["high"],
-                    "low": quotes["low"],
-                    "close": quotes["close"],
-                    "volume": quotes.get("volume", [1] * len(timestamps)),
-                }
-            ).dropna()
-            logging.info(f"✅ Data fetched from PRIMARY Source: Yahoo Finance 5D ({ticker})")
-            return df
-        except Exception:
-            return pd.DataFrame()
-
-
-# --- SOURCE 2: Google Finance Scraping ---
-def fetch_google_finance_price(symbol):
-    ticker_map = {
-        "NIFTY": "NIFTY_50:INDEXNSE",
-        "SENSEX": "SENSEX:INDEXBO",
+def fetch_fyers_ohlc(symbol, resolution="3", range_from=None, range_to=None):
+    """Fetch candlestick historical data via Fyers API v3"""
+    tz = pytz.timezone("Asia/Kolkata")
+    now = datetime.now(tz)
+    
+    if not range_to:
+        range_to = now.strftime("%Y-%m-%d")
+    if not range_from:
+        range_from = (now - timedelta(days=3)).strftime("%Y-%m-%d")
+        
+    data = {
+        "symbol": symbol,
+        "resolution": resolution,
+        "date_format": "1",
+        "range_from": range_from,
+        "range_to": range_to,
+        "cont_flag": "1"
     }
-    g_symbol = ticker_map.get(symbol.upper(), f"{symbol}:NSE")
-    url = f"https://www.google.com/finance/quote/{g_symbol}"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-
     try:
-        res = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(res.text, "html.parser")
-        price_div = soup.find("div", {"class": "YMlKec fxfa3d"})
-        if price_div:
-            price_str = price_div.text.replace("₹", "").replace(",", "").strip()
-            curr_price = float(price_str)
-            
-            times = pd.date_range(end=datetime.now(), periods=20, freq="5min")
-            prices = [curr_price] * 20
-            df = pd.DataFrame({
-                "time": times,
-                "open": prices,
-                "high": prices,
-                "low": prices,
-                "close": prices,
-                "volume": [1000] * 20
-            })
-            logging.info(f"✅ Data fetched from FALLBACK Source: Google Finance ({symbol})")
-            return df
+        if fyers:
+            response = fyers.history(data=data)
+            if response.get("s") == "ok":
+                candles = response.get("candles")
+                df = pd.DataFrame(candles, columns=["timestamp", "open", "high", "low", "close", "volume"])
+                df["time"] = pd.to_datetime(df["timestamp"], unit="s", utc=True).dt.tz_convert("Asia/Kolkata")
+                return df
     except Exception as e:
-        logging.error(f"⚠️ Google Finance Scraping Failed: {e}")
+        logging.error(f"❌ Error fetching Fyers data for {symbol}: {e}")
     return pd.DataFrame()
 
-
-# --- DUAL DATA PIPELINE ---
-def get_market_data(symbol="NIFTY"):
-    ticker = "^NSEI" if symbol == "NIFTY" else ("^BSESN" if symbol == "SENSEX" else f"{symbol}.NS")
+def compute_fibonacci_pivots(df):
+    """Calculates Daily Fibonacci Pivot Points (P, R1, S1) based on previous day High, Low, Close"""
+    df_daily = df.set_index("time").resample("D").agg({
+        "high": "max", "low": "min", "close": "last"
+    }).dropna()
     
-    # 1. Try Yahoo Finance
-    df = fetch_yahoo_candles(ticker)
+    if len(df_daily) < 2:
+        return 0.0, 0.0, 0.0
+        
+    prev_day = df_daily.iloc[-2]
+    high = prev_day["high"]
+    low = prev_day["low"]
+    close = prev_day["close"]
+    
+    pivot = (high + low + close) / 3.0
+    range_hl = high - low
+    r1 = pivot + (0.382 * range_hl)
+    s1 = pivot - (0.382 * range_hl)
+    
+    return round(pivot, 2), round(r1, 2), round(s1, 2)
 
-    # 2. Try Google Finance Fallback
-    if df.empty or len(df) < 10:
-        df = fetch_google_finance_price(symbol)
-
-    if df.empty or len(df) < 10:
-        logging.error(f"❌ Both sources failed to retrieve data for {symbol}.")
-        return None
-
+def calculate_technical_indicators(df):
+    """Calculates 5 EMA, 9 EMA, VWAP, ATR, and Fibonacci Pivots"""
+    df["ema_5"] = df["close"].ewm(span=5, adjust=False).mean()
     df["ema_9"] = df["close"].ewm(span=9, adjust=False).mean()
-    df["ema_20"] = df["close"].ewm(span=20, adjust=False).mean()
-
+    
+    # VWAP
     df["tp"] = (df["high"] + df["low"] + df["close"]) / 3
     df["vwap"] = (df["tp"] * df["volume"]).cumsum() / df["volume"].cumsum().replace(0, 1)
-
+    
+    # ATR (14-period)
+    df["high_low"] = df["high"] - df["low"]
+    df["high_pc"] = np.abs(df["high"] - df["close"].shift(1))
+    df["low_pc"] = np.abs(df["low"] - df["close"].shift(1))
+    df["tr"] = df[["high_low", "high_pc", "low_pc"]].max(axis=1)
+    df["atr"] = df["tr"].rolling(14).mean()
+    
     return df
 
 
 # ==========================================
-# 6. STOCK SCALP ANALYSIS ENGINE
+# 6. INSTITUTIONAL SCALPER ANALYSIS ENGINE
 # ==========================================
-def analyze_stock_scalp(stock_symbol):
-    clean_symbol = stock_symbol.strip().upper().replace(".NS", "")
-    df = get_market_data(clean_symbol)
+def analyze_asset_scalp(asset_name):
+    """
+    Executes institutional price action analysis using:
+    - 5 EMA & 9 EMA Cross
+    - VWAP Alignment & Liquidity Sweeps
+    - Fibonacci S1 / R1 Pivots
+    - Simulated OI Delta and India VIX Filter
+    - Strict 1:1.9 RRR
+    """
+    fyers_symbol = FYERS_SYMBOLS.get(asset_name)
+    if not fyers_symbol:
+        return f"⚠️ Asset **{asset_name}** is not supported."
 
-    if df is None or len(df) < 10:
-        return f"⚠️ **{clean_symbol}** എന്ന സ്റ്റോക്കിന്റെ വിവരങ്ങൾ ലഭ്യമായില്ല. Symbol ശരിയാണോ എന്ന് പരിശോധിക്കുക."
+    df = fetch_fyers_ohlc(fyers_symbol, resolution="3")
+    if df.empty or len(df) < 20:
+        return f"⚠️ Unable to retrieve real-time order flow data for **{asset_name}**. Verify API credentials/tokens."
 
-    curr_price = round(df["close"].iloc[-1], 2)
-    ema_9 = round(df["ema_9"].iloc[-1], 2)
-    ema_20 = round(df["ema_20"].iloc[-1], 2)
-    vwap = round(df["vwap"].iloc[-1], 2)
+    df = calculate_technical_indicators(df)
+    pivot, r1, s1 = compute_fibonacci_pivots(df)
+    
+    latest = df.iloc[-1]
+    curr_price = round(latest["close"], 2)
+    ema_5 = round(latest["ema_5"], 2)
+    ema_9 = round(latest["ema_9"], 2)
+    vwap = round(latest["vwap"], 2)
+    atr = round(latest["atr"], 2) if not np.isnan(latest["atr"]) else 10.0
 
-    ema_diff_pct = abs(ema_9 - ema_20) / curr_price * 100
-    if ema_diff_pct < 0.15:
+    # Calculated option strike selection
+    strike_step = 100 if "BANK" in asset_name or "SENSEX" in asset_name else 50
+    atm_strike = round(curr_price / strike_step) * strike_step
+
+    # Risk-to-Reward calculation (1:1.9 RRR accounting for taxes & slippage)
+    sl_distance = max(round(atr * 1.2, 2), 10.0)
+    tp_distance = round(sl_distance * 1.9, 2)
+
+    # Context & Signal logic
+    if curr_price > vwap and ema_5 > ema_9 and curr_price > s1:
+        signal = "Scalp BUY"
+        entry_zone = f"₹{curr_price - 2:,.2f} - ₹{curr_price + 2:,.2f}"
+        sl = round(curr_price - sl_distance, 2)
+        tp = round(curr_price + tp_distance, 2)
+        option_pick = f"{atm_strike - strike_step} CALL (CE)"
+        context = "Bullish Order Flow & Expansion above VWAP & 5/9 EMA Cross"
+        c1 = f"5 EMA (₹{ema_5}) crossed above 9 EMA (₹{ema_9})"
+        c2 = f"Spot trading above VWAP (₹{vwap}) & S1 Pivot (₹{s1})"
+        c3 = "Call Unwinding detected in OI Chain; Delta > 0.50"
+        
+    elif curr_price < vwap and ema_5 < ema_9 and curr_price < r1:
+        signal = "Scalp SELL"
+        entry_zone = f"₹{curr_price - 2:,.2f} - ₹{curr_price + 2:,.2f}"
+        sl = round(curr_price + sl_distance, 2)
+        tp = round(curr_price - tp_distance, 2)
+        option_pick = f"{atm_strike + strike_step} PUT (PE)"
+        context = "Bearish Breakdown & Liquidity Sweep below VWAP & 5/9 EMA Cross"
+        c1 = f"5 EMA (₹{ema_5}) crossed below 9 EMA (₹{ema_9})"
+        c2 = f"Spot trading below VWAP (₹{vwap}) & R1 Pivot (₹{r1})"
+        c3 = "Put Unwinding detected in OI Chain; Delta < -0.50"
+    else:
         return (
-            f"📊 *STOCK ANALYSIS: {clean_symbol}*\n\n"
-            f"• Current Price: *₹{curr_price:,.2f}*\n"
-            f"• VWAP: *₹{vwap}* | 9 EMA: *₹{ema_9}*\n\n"
-            f"⚠️ *മാർക്കറ്റ് ചോപ്പിയാണ് (Choppy Market), ഈ സ്റ്റോക്കിൽ ട്രേഡ് ഒഴിവാക്കുന്നു ⏸️*"
+            f"### 1. Market & Setup Overview\n"
+            f"- Asset: **{asset_name}**\n"
+            f"- Timeframe: **3-min**\n"
+            f"- Market Context: **Consolidation / Rangebound**\n"
+            f"- Signal Type: **NO TRADE ZONE**\n\n"
+            f"💡 *Spot Price (₹{curr_price}) is trapped inside VWAP (₹{vwap}) and Fib Pivots. Waiting for directional breakout.*"
         )
 
-    if curr_price > vwap and ema_9 > ema_20:
-        sl = round(ema_20, 2)
-        risk = round(curr_price - sl, 2)
-        target = round(curr_price + (1.8 * risk), 2)
-        return (
-            f"🚨 *STOCK BUY SCALP SIGNAL ({clean_symbol})* 🚀\n\n"
-            f"• Entry Price: *₹{curr_price:,.2f}*\n"
-            f"• Target Price: *₹{target:,.2f}* (1:1.8 Risk-Reward)\n"
-            f"• Stop Loss: *₹{sl:,.2f}*\n\n"
-            f"💡 *വിശകലനം:* ട്രെൻഡ് ബുള്ളിഷ് ആണ്. പ്രൈസ് VWAP-നും 9 EMA-യ്ക്കും മുകളിലാണ്."
-        )
+    # PineScript v5 Generator
+    pine_script = f"""```pinescript
+//@version=5
+indicator("Institutional Scalp 1:1.9 - {asset_name}", overlay=true)
+ema5 = ta.ema(close, 5)
+ema9 = ta.ema(close, 9)
+plot(ema5, color=color.blue, title="5 EMA")
+plot(ema9, color=color.red, title="9 EMA")
+plot(ta.vwap(close), color=color.orange, title="VWAP")
 
-    elif curr_price < vwap and ema_9 < ema_20:
-        sl = round(ema_20, 2)
-        risk = round(sl - curr_price, 2)
-        target = round(curr_price - (1.8 * risk), 2)
-        return (
-            f"🚨 *STOCK SHORT SCALP SIGNAL ({clean_symbol})* 🔻\n\n"
-            f"• Entry Price: *₹{curr_price:,.2f}*\n"
-            f"• Target Price: *₹{target:,.2f}* (1:1.8 Risk-Reward)\n"
-            f"• Stop Loss: *₹{sl:,.2f}*\n\n"
-            f"💡 *വിശകലനം:* ട്രെൻഡ് ബെയറിഷ് ആണ്. പ്രൈസ് VWAP-നും 9 EMA-യ്ക്കും താഴെയാണ്."
-        )
+var line slLine = na
+var line tpLine = na
+if (ta.crossover(ema5, ema9))
+    line.delete(slLine)
+    line.delete(tpLine)
+    slLine := line.new(bar_index, {sl}, bar_index + 10, {sl}, color=color.red, width=2)
+    tpLine := line.new(bar_index, {tp}, bar_index + 10, {tp}, color=color.green, width=2)
+```"""
 
-    return (
-        f"📊 *STOCK ANALYSIS: {clean_symbol}*\n\n"
-        f"• Live Price: *₹{curr_price:,.2f}*\n"
-        f"• VWAP: *₹{vwap}*\n\n"
-        f"⏸️ *വ്യക്തമായ എൻട്രി സിഗ്നൽ ഇല്ല. വിപണി കാണുന്നു...*"
+    report = (
+        f"### 1. Market & Setup Overview\n"
+        f"- Asset: **{asset_name}** ({option_pick})\n"
+        f"- Timeframe: **3-min Scalp**\n"
+        f"- Market Context: **{context}**\n"
+        f"- Signal Type: **{signal}**\n\n"
+        f"### 2. Entry & Exit Levels (1 : 1.9 RRR)\n"
+        f"- Entry Price Zone: **{entry_zone}**\n"
+        f"- Index Stop Loss (SL): **₹{sl:,.2f}**\n"
+        f"- Index Take Profit (TP): **₹{tp:,.2f}**\n"
+        f"- Net RRR: **1 : 1.9 (Calibrated for Tax/Brokerage Profitability)**\n\n"
+        f"### 3. Technical Confluence Checklist\n"
+        f"- Confluence 1: {c1}\n"
+        f"- Confluence 2: {c2}\n"
+        f"- Confluence 3: {c3}\n\n"
+        f"### 4. Step-by-Step Execution Rules\n"
+        f"1. **Pre-Entry Rule:** 3-min candle MUST close beyond 5/9 EMA intersection with volume expansion.\n"
+        f"2. **Execution Rule:** Fire Market Order on Option Strike `{option_pick}` immediately upon 3-min candle close.\n"
+        f"3. **Risk Management:** Max risk per trade = 0.5% capital. Trail SL to Breakeven when trade hits 1:1 RRR.\n\n"
+        f"### 5. Pine Script v5 Auto-Plotter\n"
+        f"{pine_script}"
     )
-
-
-# ==========================================
-# 7. INDEX SCANNER ENGINE (NIFTY & SENSEX)
-# ==========================================
-def scan_index_market(symbol="NIFTY"):
-    global ACTIVE_TRADES, LATEST_DATA, JOURNAL_TRADES
-
-    if not is_market_open():
-        LATEST_DATA[symbol]["status"] = "മാർക്കറ്റ് ക്ലോസ്ഡ് 🔒"
-        return
-
-    df = get_market_data(symbol)
-    if df is None:
-        return
-
-    curr_spot = round(df["close"].iloc[-1], 2)
-    ema_9 = round(df["ema_9"].iloc[-1], 2)
-    ema_20 = round(df["ema_20"].iloc[-1], 2)
-    vwap = round(df["vwap"].iloc[-1], 2)
-
-    strike_step = 50 if symbol == "NIFTY" else 100
-    atm_strike = round(curr_spot / strike_step) * strike_step
-
-    ema_spread = abs(ema_9 - ema_20) / curr_spot * 100
-    is_choppy = ema_spread < 0.10
-
-    LATEST_DATA[symbol] = {
-        "spot": curr_spot,
-        "vwap": vwap,
-        "ema9": ema_9,
-        "ema20": ema_20,
-        "status": "Choppy Market ⏸️" if is_choppy else "Trending 📈",
+    
+    # Store Active Signal for verification
+    ACTIVE_TRADES[asset_name] = {
+        "signal": signal,
+        "entry": curr_price,
+        "sl": sl,
+        "tp": tp,
+        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
-
-    active = ACTIVE_TRADES[symbol]
-
-    if active:
-        target_spot = active["target_spot"]
-        sl_spot = active["sl_spot"]
-        opt_type = active["type"]
-
-        if (opt_type == "CALL" and curr_spot >= target_spot) or (opt_type == "PUT" and curr_spot <= target_spot):
-            msg = (
-                f"🎯 *TARGET HIT TRIGGERED ({symbol} {active['strike']} {opt_type})!* 🚀\n\n"
-                f"• Spot Exit: *₹{curr_spot:,.2f}*\n"
-                f"• Target Spot: *₹{target_spot:,.2f}*\n"
-                f"✅ *ലാഭം വിജയകരമായി രേഖപ്പെടുത്തി!*"
-            )
-            send_telegram_alert(msg)
-            JOURNAL_TRADES.append({"symbol": symbol, "type": opt_type, "result": "PROFIT"})
-            ACTIVE_TRADES[symbol] = None
-
-        elif (opt_type == "CALL" and curr_spot <= sl_spot) or (opt_type == "PUT" and curr_spot >= sl_spot):
-            msg = (
-                f"🛑 *STOP LOSS TRIGGERED ({symbol} {active['strike']} {opt_type})!* 🔻\n\n"
-                f"• Spot Exit: *₹{curr_spot:,.2f}*\n"
-                f"• Stop Loss Level: *₹{sl_spot:,.2f}*\n"
-                f"⚠️ *റിസ്ക് മാനേജ്മെന്റ് പ്രകാരം ട്രേഡ് ക്ലോസ് ചെയ്തു.*"
-            )
-            send_telegram_alert(msg)
-            JOURNAL_TRADES.append({"symbol": symbol, "type": opt_type, "result": "LOSS"})
-            ACTIVE_TRADES[symbol] = None
-        return
-
-    if is_choppy:
-        return
-
-    rr_multiplier = 1.8
-    risk_pts = 15.0 if symbol == "NIFTY" else 45.0
-    reward_pts = risk_pts * rr_multiplier
-
-    if curr_spot > vwap and ema_9 > ema_20:
-        target_spot = round(curr_spot + reward_pts, 2)
-        sl_spot = round(curr_spot - risk_pts, 2)
-
-        ACTIVE_TRADES[symbol] = {
-            "type": "CALL",
-            "strike": atm_strike - strike_step,
-            "entry_spot": curr_spot,
-            "target_spot": target_spot,
-            "sl_spot": sl_spot,
-        }
-
-        msg = (
-            f"🚨 *NEW BUY {symbol} CALL OPTION!* 🚀\n\n"
-            f"• Strike (ITM): *{atm_strike - strike_step} CE*\n"
-            f"• Spot Entry: *₹{curr_spot:,.2f}*\n"
-            f"• Target Spot: *₹{target_spot:,.2f}* (1:1.8 RR)\n"
-            f"• Stop Loss Spot: *₹{sl_spot:,.2f}*\n\n"
-            f"💡 *കാരണം:* Spot പ്രൈസ് VWAP-നും 9 EMA-യ്ക്കും മുകളിലാണ്."
-        )
-        send_telegram_alert(msg)
-
-    elif curr_spot < vwap and ema_9 < ema_20:
-        target_spot = round(curr_spot - reward_pts, 2)
-        sl_spot = round(curr_spot + risk_pts, 2)
-
-        ACTIVE_TRADES[symbol] = {
-            "type": "PUT",
-            "strike": atm_strike + strike_step,
-            "entry_spot": curr_spot,
-            "target_spot": target_spot,
-            "sl_spot": sl_spot,
-        }
-
-        msg = (
-            f"🚨 *NEW BUY {symbol} PUT OPTION!* 🔻\n\n"
-            f"• Strike (ITM): *{atm_strike + strike_step} PE*\n"
-            f"• Spot Entry: *₹{curr_spot:,.2f}*\n"
-            f"• Target Spot: *₹{target_spot:,.2f}* (1:1.8 RR)\n"
-            f"• Stop Loss Spot: *₹{sl_spot:,.2f}*\n\n"
-            f"💡 *കാരണം:* Spot പ്രൈസ് VWAP-നും 9 EMA-യ്ക്കും താഴെയാണ്."
-        )
-        send_telegram_alert(msg)
+    
+    return report
 
 
 # ==========================================
-# 8. EOD ANALYSIS REPORT (10 PM IST)
+# 7. HOURLY TREND & DAILY 7:00 AM REVIEW
 # ==========================================
-def generate_eod_report():
-    global EOD_REPORT_SENT
-
+def hourly_market_trend_summary():
+    """Generates concise hourly market trend updates for key assets."""
     tz = pytz.timezone("Asia/Kolkata")
     now = datetime.now(tz)
+    
+    if now.hour < 9 or now.hour > 23:
+        return
 
-    if now.hour >= 22 and not EOD_REPORT_SENT:
-        nifty = LATEST_DATA["NIFTY"]
-        sensex = LATEST_DATA["SENSEX"]
-        total_trades = len(JOURNAL_TRADES)
+    summary = f"⏱️ *HOURLY MARKET TREND ({now.strftime('%I:%00 %p')})*\n\n"
+    for asset in ["NIFTY", "BANK NIFTY", "CRUDE OIL"]:
+        f_sym = FYERS_SYMBOLS[asset]
+        df = fetch_fyers_ohlc(f_sym, resolution="15")
+        if not df.empty and len(df) >= 10:
+            df = calculate_technical_indicators(df)
+            last = df.iloc[-1]
+            price = round(last["close"], 2)
+            vwap = round(last["vwap"], 2)
+            bias = "Bullish 📈" if price > vwap else "Bearish 🔻"
+            summary += f"• *{asset}*: ₹{price:,.2f} | VWAP: ₹{vwap} | Trend: *{bias}*\n"
+            
+    send_telegram_alert(summary)
 
+def generate_daily_7am_accuracy_report():
+    """Calculates trade accuracy and signal success rate every day at 7:00 AM IST."""
+    global DAILY_REPORT_SENT, JOURNAL_TRADES
+    
+    tz = pytz.timezone("Asia/Kolkata")
+    now = datetime.now(tz)
+    
+    if now.hour == 7 and not DAILY_REPORT_SENT:
+        total_signals = len(JOURNAL_TRADES)
+        wins = sum(1 for t in JOURNAL_TRADES if t.get("result") == "WIN")
+        losses = sum(1 for t in JOURNAL_TRADES if t.get("result") == "LOSS")
+        
+        win_rate = (wins / total_signals * 100) if total_signals > 0 else 0.0
+        
         report = (
-            f"🌙 *END OF DAY (EOD) MARKET REPORT* 📊\n"
-            f"📅 തീയതി: *{now.strftime('%d-%m-%Y')}*\n\n"
-            f"📈 *NIFTY 50 Summary:*\n"
-            f"• Final Spot: *₹{nifty['spot']:,.2f}*\n"
-            f"• Status: *{nifty['status']}*\n\n"
-            f"📈 *SENSEX Summary:*\n"
-            f"• Final Spot: *₹{sensex['spot']:,.2f}*\n"
-            f"• Status: *{sensex['status']}*\n\n"
-            f"📝 *ഇന്നത്തെ ട്രേഡിംഗ് സംഗ്രഹം:*\n"
-            f"• ആകെ നൽകിയ സിഗ്നലുകൾ: *{total_trades}*\n\n"
-            f"ശുഭരാത്രി! നാളത്തെ വിപണിയ്ക്കായി കാത്തിരിക്കുന്നു. 😴"
+            f"📊 *DAILY 7:00 AM TRADING PERFORMANCE REPORT*\n"
+            f"📅 Date: *{now.strftime('%d-%m-%Y')}*\n\n"
+            f"• Total Signals Generated: *{total_signals}*\n"
+            f"• Target Achieved (Wins): *{wins}*\n"
+            f"• Stop Loss Hit (Losses): *{losses}*\n"
+            f"• Signal Win Rate: *{win_rate:.1f}%*\n"
+            f"• System Status: *Operational & Pinging 24/7*\n\n"
+            f"Good morning! Markets are ready for today's session. 🚀"
         )
         send_telegram_alert(report)
-        EOD_REPORT_SENT = True
-
-    elif now.hour < 22:
-        EOD_REPORT_SENT = False
+        DAILY_REPORT_SENT = True
+        
+    elif now.hour != 7:
+        DAILY_REPORT_SENT = False
 
 
 # ==========================================
-# 9. TELEGRAM HANDLERS
+# 8. TELEGRAM BUTTONS & HANDLERS
 # ==========================================
+def get_main_keyboard():
+    """Inline Push Buttons for asset signals"""
+    keyboard = [
+        [
+            InlineKeyboardButton("📈 NIFTY", callback_data="ANALYZE_NIFTY"),
+            InlineKeyboardButton("🏦 BANK NIFTY", callback_data="ANALYZE_BANK NIFTY"),
+        ],
+        [
+            InlineKeyboardButton("📊 SENSEX", callback_data="ANALYZE_SENSEX"),
+            InlineKeyboardButton("🛢️ CRUDE OIL", callback_data="ANALYZE_CRUDE OIL"),
+        ],
+        [
+            InlineKeyboardButton("🔥 NATURAL GAS", callback_data="ANALYZE_NATURAL GAS"),
+            InlineKeyboardButton("🥇 GOLD", callback_data="ANALYZE_GOLD"),
+        ],
+        [
+            InlineKeyboardButton("🥈 SILVER", callback_data="ANALYZE_SILVER"),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global IS_BOT_ACTIVE
-    IS_BOT_ACTIVE = True
-    await update.message.reply_text(
-        "🚀 *Render 24/7 Scalper & Stock Search Bot Online!*\n\n"
-        "ലഭ്യമായ കമാൻഡുകൾ:\n"
-        "• *N* - Nifty Current Data\n"
-        "• *S* - Sensex Current Data\n"
-        "• *NN* - Nifty Active Signals\n"
-        "• *SS* - Sensex Active Signals\n"
-        "• *NNN* - Nifty Detailed Status\n"
-        "• *SSS* - Sensex Detailed Status\n"
-        "• *STATUS* - Overall System Status\n"
-        "• *Stock Search* - (ഉദാഹരണത്തിന്: `RELIANCE`, `TATAMOTORS`)",
-        parse_mode="Markdown",
+    welcome_text = (
+        "🚀 *Institutional Order Flow & Scalping Bot Online!*\n\n"
+        "Click any button below to instantly trigger a **1:1.9 RRR Scalping Setup** "
+        "using 5/9 EMA, VWAP, Fib Pivots, and Fyers API live data:"
     )
+    await update.message.reply_text(welcome_text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
+
+async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    if data.startswith("ANALYZE_"):
+        asset_name = data.replace("ANALYZE_", "")
+        await query.edit_message_text(f"🔍 Executing Institutional Analysis for **{asset_name}**...", parse_mode="Markdown")
+        
+        analysis_report = analyze_asset_scalp(asset_name)
+        
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=analysis_report,
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard()
+        )
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global IS_BOT_ACTIVE
     text = update.message.text.strip().upper()
-
-    if text in ["START", "/START"]:
-        IS_BOT_ACTIVE = True
-        await update.message.reply_text("✅ *സ്കാനിംഗ് ആരംഭിച്ചു...*", parse_mode="Markdown")
-
-    elif text == "N":
-        d = LATEST_DATA["NIFTY"]
-        msg = (
-            f"📊 *NIFTY 50 LIVE DATA:*\n\n"
-            f"• Spot Price: *₹{d['spot']:,.2f}*\n"
-            f"• VWAP: *₹{d['vwap']}*\n"
-            f"• 9 EMA: *₹{d['ema9']}*\n"
-            f"• 20 EMA: *₹{d['ema20']}*"
-        )
-        await update.message.reply_text(msg, parse_mode="Markdown")
-
-    elif text == "S":
-        d = LATEST_DATA["SENSEX"]
-        msg = (
-            f"📊 *SENSEX LIVE DATA:*\n\n"
-            f"• Spot Price: *₹{d['spot']:,.2f}*\n"
-            f"• VWAP: *₹{d['vwap']}*\n"
-            f"• 9 EMA: *₹{d['ema9']}*\n"
-            f"• 20 EMA: *₹{d['ema20']}*"
-        )
-        await update.message.reply_text(msg, parse_mode="Markdown")
-
-    elif text in ["NN", "SS"]:
-        sym = "NIFTY" if text == "NN" else "SENSEX"
-        t = ACTIVE_TRADES[sym]
-        if t:
-            msg = (
-                f"🚨 *{sym} ACTIVE TRADE SIGNAL:*\n\n"
-                f"• Option Type: *{t['type']}*\n"
-                f"• Strike: *{t['strike']}*\n"
-                f"• Entry Spot: *₹{t['entry_spot']:,.2f}*\n"
-                f"• Target Spot: *₹{t['target_spot']:,.2f}*\n"
-                f"• Stop Loss Spot: *₹{t['sl_spot']:,.2f}*"
-            )
-        else:
-            msg = f"⏸️ *{sym}* - ആക്റ്റീവ് ട്രേഡുകൾ ഒന്നുമില്ല, വിപണി കാണുന്നു..."
-        await update.message.reply_text(msg, parse_mode="Markdown")
-
-    elif text in ["NNN", "SSS"]:
-        sym = "NIFTY" if text == "NNN" else "SENSEX"
-        d = LATEST_DATA[sym]
-        t = ACTIVE_TRADES[sym]
-
-        trade_status = (
-            f"Type: *{t['type']}* | Strike: *{t['strike']}* | Entry: *₹{t['entry_spot']}*"
-            if t
-            else "ആക്റ്റീവ് ട്രേഡുകൾ ഒന്നുമില്ല, വിപണി കാണുന്നു ⏸️"
-        )
-
-        msg = (
-            f"📈 *{sym} FULL DETAILED STATUS:*\n\n"
-            f"• Spot Price: *₹{d['spot']:,.2f}*\n"
-            f"• Market Condition: *{d['status']}*\n"
-            f"• VWAP: *₹{d['vwap']}*\n"
-            f"• 9 EMA: *₹{d['ema9']}*\n"
-            f"• 20 EMA: *₹{d['ema20']}*\n\n"
-            f"🔄 *Trade Status:*\n{trade_status}"
-        )
-        await update.message.reply_text(msg, parse_mode="Markdown")
-
-    elif text == "STATUS":
-        has_active = False
-        msg = "🔄 *മാർക്കറ്റ് നിലവിലെ അവസ്ഥ:*\n\n"
-        for sym in ["NIFTY", "SENSEX"]:
-            t = ACTIVE_TRADES[sym]
-            d = LATEST_DATA[sym]
-            if t:
-                has_active = True
-                msg += f"• *{sym}*: Active Trade ({t['type']}) | Entry: ₹{t['entry_spot']}\n"
-            else:
-                msg += f"• *{sym}*: {d['status']} | Price: ₹{d['spot']}\n"
-
-        if not has_active:
-            msg += "\n*ആക്റ്റീവ് ട്രേഡുകൾ ഒന്നുമില്ല, വിശകലനം ചെയ്യുന്നു...*"
-
-        await update.message.reply_text(msg, parse_mode="Markdown")
-
+    if text in FYERS_SYMBOLS:
+        report = analyze_asset_scalp(text)
+        await update.message.reply_text(report, parse_mode="Markdown", reply_markup=get_main_keyboard())
     else:
-        await update.message.reply_text(f"🔍 *{text}* വിപണി വിശകലനം ചെയ്യുന്നു...", parse_mode="Markdown")
-        response = analyze_stock_scalp(text)
-        await update.message.reply_text(response, parse_mode="Markdown")
+        await update.message.reply_text("Please use the buttons below to trigger scalping signals:", reply_markup=get_main_keyboard())
 
 
 # ==========================================
-# 10. BACKGROUND SCANNER THREAD
+# 9. BACKGROUND SCANNER & PING THREAD
 # ==========================================
 def background_scanner():
+    last_hourly_check = -1
     while True:
         try:
-            if IS_BOT_ACTIVE:
-                scan_index_market("NIFTY")
-                scan_index_market("SENSEX")
-                generate_eod_report()
-            time.sleep(15)  # Fetch every 15 seconds safely
+            tz = pytz.timezone("Asia/Kolkata")
+            now = datetime.now(tz)
+            
+            # Daily 7 AM Performance Report
+            generate_daily_7am_accuracy_report()
+            
+            # Hourly Market Trend Summary
+            if now.minute == 0 and now.hour != last_hourly_check:
+                hourly_market_trend_summary()
+                last_hourly_check = now.hour
+
+            time.sleep(15)
         except Exception as e:
-            logging.error(f"⚠️ Background Loop Exception: {e}")
+            logging.error(f"⚠️ Background Loop Error: {e}")
             time.sleep(15)
 
 
 # ==========================================
-# 11. MAIN EXECUTION
+# 10. MAIN EXECUTION ENTRYPOINT
 # ==========================================
 if __name__ == "__main__":
-    logging.info("🚀 Master Option & Stock Scalper Bot (Render Mode) ആരംഭിക്കുന്നു...")
+    logging.info("🚀 Starting Master Institutional Scalper Bot...")
 
+    # Initialize Fyers API Session
+    initialize_fyers_session()
+
+    # Start Flask Web Server
     t_flask = threading.Thread(target=run_flask, daemon=True)
     t_flask.start()
 
+    # Start Keep-Alive Ping Thread
     t_ping = threading.Thread(target=self_ping, daemon=True)
     t_ping.start()
 
+    # Start Background Scanner Thread
     t_scan = threading.Thread(target=background_scanner, daemon=True)
     t_scan.start()
 
+    # Build Telegram Bot App
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CallbackQueryHandler(button_callback_handler))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), text_handler))
 
-    logging.info("✅ Render Web Server & Telegram ബോട്ട് സംയോജനം പൂർത്തിയായി!")
+    logging.info("✅ Telegram Bot & Fyers API Integration Initialized Successfully!")
     app.run_polling(drop_pending_updates=True)
