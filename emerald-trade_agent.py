@@ -12,7 +12,6 @@ from flask import Flask
 
 # FYERS API v3 Imports
 from fyers_apiv3 import fyersModel
-from fyers_apiv3.FyersWebsocket import data_ws
 
 # Telegram Bot Imports
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -25,23 +24,25 @@ from telegram.ext import (
     filters,
 )
 
-# Logging Configuration
+# Setup Logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 
 # ==========================================
-# 1. HARDCODED CREDENTIALS & CONFIGURATION
+# 1. CREDENTIALS & CONFIGURATION
 # ==========================================
-TELEGRAM_BOT_TOKEN = "8866649004:AAHuRrhqCHqRq0Ucb1i_UyTCG2B5nKOCkps"
-TELEGRAM_CHAT_ID = "5944911045"
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8866649004:AAHuRrhqCHqRq0Ucb1i_UyTCG2B5nKOCkps")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "5944911045")
 
 # FYERS API Credentials
-FYERS_CLIENT_ID = "KDE60BKD5D-100"
-FYERS_SECRET_KEY = "1NWBJLVQQ9"
+FYERS_CLIENT_ID = os.environ.get("FYERS_CLIENT_ID", "KDE60BKD5D-100")
+FYERS_SECRET_KEY = os.environ.get("FYERS_SECRET_KEY", "1NWBJLVQQ9")
 FYERS_USER_ID = "FAK37502"
 FYERS_PIN = "2007"
+
+REDIRECT_URI = "https://trade.fyers.in/api-login/default-redirect-uri/"
 
 # Global Fyers Model Instance
 fyers = None
@@ -66,21 +67,28 @@ JOURNAL_TRADES = []
 
 
 # ==========================================
-# 2. FYERS API v3 SESSION INITIALIZATION
+# 2. FYERS API INITIALIZATION
 # ==========================================
 def initialize_fyers_session():
-    """Initializes Fyers API v3 Model using the access token from Environment or Config"""
+    """Initializes Fyers API v3 Model using FYERS_ACCESS_TOKEN from Environment Variables"""
     global fyers
-    try:
-        access_token = os.environ.get("FYERS_ACCESS_TOKEN", "")
-        if not access_token:
-            logging.warning("⚠️ FYERS_ACCESS_TOKEN not set in environment variables. Live market queries will require an authenticated token.")
-            fyers = fyersModel.FyersModel(client_id=FYERS_CLIENT_ID, is_async=False, token="", log_path="")
-        else:
-            fyers = fyersModel.FyersModel(client_id=FYERS_CLIENT_ID, is_async=False, token=access_token, log_path="")
-            logging.info("✅ Fyers API v3 Session Initialized Successfully!")
-    except Exception as e:
-        logging.error(f"❌ Fyers API v3 Initialization Error: {e}")
+    access_token = os.environ.get("FYERS_ACCESS_TOKEN", "")
+    
+    if access_token:
+        try:
+            fyers = fyersModel.FyersModel(
+                client_id=FYERS_CLIENT_ID,
+                is_async=False,
+                token=access_token,
+                log_path=""
+            )
+            logging.info("✅ Fyers API v3 Session Initialized Successfully with Live Access Token!")
+        except Exception as e:
+            logging.error(f"❌ Failed to initialize Fyers session: {e}")
+            fyers = None
+    else:
+        logging.warning("⚠️ FYERS_ACCESS_TOKEN environment variable not set. Real-time market requests will fail until token is provided in Render Environment.")
+        fyers = None
 
 
 # ==========================================
@@ -209,20 +217,17 @@ def calculate_technical_indicators(df):
 # 6. INSTITUTIONAL SCALPER ANALYSIS ENGINE
 # ==========================================
 def analyze_asset_scalp(asset_name):
-    """
-    Executes institutional price action analysis using:
-    - 5 EMA & 9 EMA Cross
-    - VWAP Alignment & Liquidity Sweeps
-    - Fibonacci S1 / R1 Pivots
-    - Strict 1:1.9 Risk-to-Reward Ratio
-    """
+    """Executes institutional price action analysis with 1:1.9 RRR"""
     fyers_symbol = FYERS_SYMBOLS.get(asset_name)
     if not fyers_symbol:
         return f"⚠️ Asset **{asset_name}** is not supported."
 
     df = fetch_fyers_ohlc(fyers_symbol, resolution="3")
     if df.empty or len(df) < 20:
-        return f"⚠️ Unable to retrieve real-time data for **{asset_name}**. Please verify `FYERS_ACCESS_TOKEN` in Render environment variables."
+        return (
+            f"⚠️ **Unable to retrieve real-time data for {asset_name}.**\n\n"
+            f"Please ensure `FYERS_ACCESS_TOKEN` is updated in your Render Environment Variables."
+        )
 
     df = calculate_technical_indicators(df)
     pivot, r1, s1 = compute_fibonacci_pivots(df)
@@ -440,7 +445,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ==========================================
-# 9. BACKGROUND SCANNER & PING THREAD
+# 9. BACKGROUND SCANNER THREAD
 # ==========================================
 def background_scanner():
     last_hourly_check = -1
