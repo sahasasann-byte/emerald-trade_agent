@@ -1,11 +1,8 @@
-Flask
-requests
+fyers-apyp3
+python-telegram-bot
 pandas
 numpy
 pytz
-pyotp
-smartapi-python
-python-telegram-bot
+requests
 beautifulsoup4
-logzero
-websocket-client
+Flask
