@@ -9,7 +9,12 @@ import numpy as np
 import pandas as pd
 import requests
 from flask import Flask
-from fyers_apyp3 import fyersModel, accessToken
+
+# FYERS API v3 Imports
+from fyers_apiv3 import fyersModel
+from fyers_apiv3.FyersWebsocket import data_ws
+
+# Telegram Bot Imports
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -20,7 +25,7 @@ from telegram.ext import (
     filters,
 )
 
-# Logging Setup
+# Logging Configuration
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
@@ -38,10 +43,10 @@ FYERS_SECRET_KEY = "1NWBJLVQQ9"
 FYERS_USER_ID = "FAK37502"
 FYERS_PIN = "2007"
 
-# Fyers Model Instance (Global)
+# Global Fyers Model Instance
 fyers = None
 
-# Mapping Assets to Fyers Symbol Formats
+# Asset Mapping for Fyers Symbols
 FYERS_SYMBOLS = {
     "NIFTY": "NSE:NIFTY50-INDEX",
     "BANK NIFTY": "NSE:NIFTYBANK-INDEX",
@@ -61,37 +66,21 @@ JOURNAL_TRADES = []
 
 
 # ==========================================
-# 2. AUTOMATED FYERS AUTHENTICATION
+# 2. FYERS API v3 SESSION INITIALIZATION
 # ==========================================
 def initialize_fyers_session():
-    """Authenticates with Fyers API v3 and returns active model session"""
+    """Initializes Fyers API v3 Model using the access token from Environment or Config"""
     global fyers
     try:
-        session = accessToken.SessionModel(
-            client_id=FYERS_CLIENT_ID,
-            secret_key=FYERS_SECRET_KEY,
-            redirect_uri="https://trade.fyers.in/api-login/default-redirect-uri/index.php",
-            response_type="code",
-            grant_type="authorization_code"
-        )
-        
-        # Generates Auth Code URL
-        auth_url = session.generate_authcode()
-        logging.info(f"🔗 Fyers Auth URL generated: {auth_url}")
-
-        # Note: If access token is passed via environment or generated code, load it:
         access_token = os.environ.get("FYERS_ACCESS_TOKEN", "")
-        
         if not access_token:
-            logging.warning("⚠️ Access Token not set. Please set FYERS_ACCESS_TOKEN env variable after first login.")
-            # Fallback initialization attempt
+            logging.warning("⚠️ FYERS_ACCESS_TOKEN not set in environment variables. Live market queries will require an authenticated token.")
             fyers = fyersModel.FyersModel(client_id=FYERS_CLIENT_ID, is_async=False, token="", log_path="")
         else:
             fyers = fyersModel.FyersModel(client_id=FYERS_CLIENT_ID, is_async=False, token=access_token, log_path="")
-            logging.info("✅ Fyers API Session Authenticated Successfully!")
-            
+            logging.info("✅ Fyers API v3 Session Initialized Successfully!")
     except Exception as e:
-        logging.error(f"❌ Fyers Authentication Error: {e}")
+        logging.error(f"❌ Fyers API v3 Initialization Error: {e}")
 
 
 # ==========================================
@@ -144,7 +133,7 @@ def send_telegram_alert(message, reply_markup=None):
 
 
 # ==========================================
-# 5. FYERS DATA ENGINE & INDICATORS
+# 5. DATA ENGINE & TECHNICAL INDICATORS
 # ==========================================
 def fetch_fyers_ohlc(symbol, resolution="3", range_from=None, range_to=None):
     """Fetch candlestick historical data via Fyers API v3"""
@@ -177,7 +166,7 @@ def fetch_fyers_ohlc(symbol, resolution="3", range_from=None, range_to=None):
     return pd.DataFrame()
 
 def compute_fibonacci_pivots(df):
-    """Calculates Daily Fibonacci Pivot Points (P, R1, S1) based on previous day High, Low, Close"""
+    """Calculates Daily Fibonacci Pivot Points (P, R1, S1)"""
     df_daily = df.set_index("time").resample("D").agg({
         "high": "max", "low": "min", "close": "last"
     }).dropna()
@@ -198,15 +187,15 @@ def compute_fibonacci_pivots(df):
     return round(pivot, 2), round(r1, 2), round(s1, 2)
 
 def calculate_technical_indicators(df):
-    """Calculates 5 EMA, 9 EMA, VWAP, ATR, and Fibonacci Pivots"""
+    """Calculates 5 EMA, 9 EMA, VWAP, and 14-period ATR"""
     df["ema_5"] = df["close"].ewm(span=5, adjust=False).mean()
     df["ema_9"] = df["close"].ewm(span=9, adjust=False).mean()
     
-    # VWAP
+    # VWAP Calculation
     df["tp"] = (df["high"] + df["low"] + df["close"]) / 3
     df["vwap"] = (df["tp"] * df["volume"]).cumsum() / df["volume"].cumsum().replace(0, 1)
     
-    # ATR (14-period)
+    # Average True Range (ATR)
     df["high_low"] = df["high"] - df["low"]
     df["high_pc"] = np.abs(df["high"] - df["close"].shift(1))
     df["low_pc"] = np.abs(df["low"] - df["close"].shift(1))
@@ -225,8 +214,7 @@ def analyze_asset_scalp(asset_name):
     - 5 EMA & 9 EMA Cross
     - VWAP Alignment & Liquidity Sweeps
     - Fibonacci S1 / R1 Pivots
-    - Simulated OI Delta and India VIX Filter
-    - Strict 1:1.9 RRR
+    - Strict 1:1.9 Risk-to-Reward Ratio
     """
     fyers_symbol = FYERS_SYMBOLS.get(asset_name)
     if not fyers_symbol:
@@ -234,7 +222,7 @@ def analyze_asset_scalp(asset_name):
 
     df = fetch_fyers_ohlc(fyers_symbol, resolution="3")
     if df.empty or len(df) < 20:
-        return f"⚠️ Unable to retrieve real-time order flow data for **{asset_name}**. Verify API credentials/tokens."
+        return f"⚠️ Unable to retrieve real-time data for **{asset_name}**. Please verify `FYERS_ACCESS_TOKEN` in Render environment variables."
 
     df = calculate_technical_indicators(df)
     pivot, r1, s1 = compute_fibonacci_pivots(df)
@@ -246,15 +234,13 @@ def analyze_asset_scalp(asset_name):
     vwap = round(latest["vwap"], 2)
     atr = round(latest["atr"], 2) if not np.isnan(latest["atr"]) else 10.0
 
-    # Calculated option strike selection
     strike_step = 100 if "BANK" in asset_name or "SENSEX" in asset_name else 50
     atm_strike = round(curr_price / strike_step) * strike_step
 
-    # Risk-to-Reward calculation (1:1.9 RRR accounting for taxes & slippage)
+    # Risk-Reward 1:1.9 Setup
     sl_distance = max(round(atr * 1.2, 2), 10.0)
     tp_distance = round(sl_distance * 1.9, 2)
 
-    # Context & Signal logic
     if curr_price > vwap and ema_5 > ema_9 and curr_price > s1:
         signal = "Scalp BUY"
         entry_zone = f"₹{curr_price - 2:,.2f} - ₹{curr_price + 2:,.2f}"
@@ -286,7 +272,6 @@ def analyze_asset_scalp(asset_name):
             f"💡 *Spot Price (₹{curr_price}) is trapped inside VWAP (₹{vwap}) and Fib Pivots. Waiting for directional breakout.*"
         )
 
-    # PineScript v5 Generator
     pine_script = f"""```pinescript
 //@version=5
 indicator("Institutional Scalp 1:1.9 - {asset_name}", overlay=true)
@@ -328,7 +313,6 @@ if (ta.crossover(ema5, ema9))
         f"{pine_script}"
     )
     
-    # Store Active Signal for verification
     ACTIVE_TRADES[asset_name] = {
         "signal": signal,
         "entry": curr_price,
