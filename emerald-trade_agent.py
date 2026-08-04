@@ -43,7 +43,6 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "5944911045")
 FYERS_CLIENT_ID = os.environ.get("FYERS_CLIENT_ID", "KDE60BKD5D-100")
 HARDCODED_ACCESS_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOlsiZDoxIiwiZDoyIiwieDowIiwieDoxIl0sImF0X2hhc2giOiJnQUFBQUFCcWNoRG5hZ3B6blBPLWpmYkVLYzFtdFhZcmszWnFSYTVGYXZLS0xQY2xYUlYzTnpTc2JxTzR5WTNZR3E2cHduNm1rU0J4VEJDRDAyVHlUd1lkZU1uaDkwWEVBVDRuYlEzbWNXU2UzRzhCTGZLb3RuRT0iLCJkaXNwbGF5X25hbWUiOiIiLCJvbXMiOiJLMSIsImhzbV9rZXkiOiJhZGFkMzlhZDQwOWUxZTcwNjU5ZDdiNDI4N2ZiNGFiZjE5YzlmN2ZkOGYwMzhjMDIwYzdhYzNiNCIsImlzRGRwaUVuYWBsZWQiOiJOIiwiaXNNdGZFbmFibGVkIjoiTiIsImZ5X2lkIjoiRkFLMzc1MDIiLCJhcHBUeXBlIjoxMDAsImV4cCI6MTc4NTg4OTgwMCwiaWF0IjoxNzg1ODYwMzI3LCJpc3MiOiJhcGkuZnllcnMuaW4iLCJuYmYiOjE3ODU4NjAzMjcsInN1YiI6ImFjY2Vzc190b2tlbiJ9.aFqvqHBsMSNHdMK4xANDBx2I2lUbPPSqCWzkQyIkIdA"
 
-# Symbol Mapping (Fyers vs Yahoo Finance Fallback)
 ASSET_CONFIG = {
     "NIFTY": {"fyers": "NSE:NIFTY50-INDEX", "yahoo": "^NSEI", "step": 50},
     "BANK NIFTY": {"fyers": "NSE:NIFTYBANK-INDEX", "yahoo": "^NSEBANK", "step": 100},
@@ -55,6 +54,9 @@ ASSET_CONFIG = {
 }
 
 fyers = None
+
+# Tracks the last sent signal state for each asset to prevent duplicate spam
+LAST_SIGNAL_STATE = {asset: None for asset in ASSET_CONFIG}
 
 def initialize_fyers():
     global fyers
@@ -70,15 +72,29 @@ def initialize_fyers():
             logging.error(f"❌ Fyers Init Failed: {e}")
 
 # ==========================================
-# 2. DATA ENGINE (FYERS + FALLBACK)
+# 2. TELEGRAM ALERT DISPATCHER
+# ==========================================
+def send_telegram_alert(message):
+    """Direct HTTP dispatcher for auto-generated background alerts"""
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "Markdown",
+    }
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        logging.error(f"⚠️ Telegram Dispatch Error: {e}")
+
+# ==========================================
+# 3. DATA ENGINE (FYERS + FALLBACK)
 # ==========================================
 def fetch_live_ohlc(asset_name):
-    """Fetch live market data using Fyers, falling back to Yahoo Finance if unavailable"""
     config = ASSET_CONFIG.get(asset_name)
     if not config:
         return pd.DataFrame()
 
-    # 1. Try Fyers API
     if fyers:
         try:
             tz = pytz.timezone("Asia/Kolkata")
@@ -97,9 +113,8 @@ def fetch_live_ohlc(asset_name):
                 df["time"] = pd.to_datetime(df["timestamp"], unit="s", utc=True).dt.tz_convert("Asia/Kolkata")
                 return df
         except Exception as e:
-            logging.warning(f"⚠️ Fyers fetch error for {asset_name}: {e}. Switching to fallback...")
+            pass
 
-    # 2. Yahoo Finance Secondary Fallback Engine
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{config['yahoo']}?range=2d&interval=2m"
         headers = {'User-Agent': 'Mozilla/5.0'}
@@ -118,8 +133,8 @@ def fetch_live_ohlc(asset_name):
             }).dropna()
             df["time"] = pd.to_datetime(df["timestamp"], unit="s", utc=True).dt.tz_convert("Asia/Kolkata")
             return df
-    except Exception as e:
-        logging.error(f"❌ Fallback fetch failed for {asset_name}: {e}")
+    except Exception:
+        pass
 
     return pd.DataFrame()
 
@@ -133,12 +148,16 @@ def calculate_technical_indicators(df):
     return df
 
 # ==========================================
-# 3. ANALYSIS & OPTION STRIKE ENGINE
+# 4. SIGNAL & ANALYSIS ENGINE
 # ==========================================
-def analyze_asset_scalp(asset_name):
+def analyze_asset_scalp(asset_name, is_auto_scan=False):
+    global LAST_SIGNAL_STATE
+
     df = fetch_live_ohlc(asset_name)
     if df.empty or len(df) < 15:
-        return f"⚠️ **Data Fetch Error:** Unable to retrieve live price for `{asset_name}`. Please refresh token or try again."
+        if not is_auto_scan:
+            return f"⚠️ **Data Fetch Error:** Unable to retrieve live price for `{asset_name}`."
+        return None
 
     df = calculate_technical_indicators(df)
     latest = df.iloc[-1]
@@ -152,66 +171,98 @@ def analyze_asset_scalp(asset_name):
     step = ASSET_CONFIG[asset_name]["step"]
     atm_strike = round(curr_price / step) * step
 
-    # 1:1.9 RRR Calculation
     sl_dist = max(round(atr * 1.2, 2), 12.0)
     tp_dist = round(sl_dist * 1.9, 2)
 
+    current_signal = "NEUTRAL"
+
     if curr_price > vwap and ema_5 > ema_9:
-        signal = "🟢 SCALP BUY (BULLISH)"
+        current_signal = "BUY"
         ce_strike = int(atm_strike - step if asset_name in ["NIFTY", "BANK NIFTY", "SENSEX"] else atm_strike)
         option_pick = f"`{ce_strike} CALL (CE)`"
         entry_zone = f"₹{curr_price - 3:,.2f} - ₹{curr_price + 3:,.2f}"
         sl = round(curr_price - sl_dist, 2)
         tp = round(curr_price + tp_dist, 2)
-        bias_desc = "Spot trading above VWAP with 5/9 EMA bullish crossover."
+        signal_header = "🚨 **NEW AUTOMATED SCALP ALERT: BUY** 🟢"
+        bias_desc = "Spot crossed above VWAP with 5/9 EMA bullish expansion."
     elif curr_price < vwap and ema_5 < ema_9:
-        signal = "🔴 SCALP SELL (BEARISH)"
+        current_signal = "SELL"
         pe_strike = int(atm_strike + step if asset_name in ["NIFTY", "BANK NIFTY", "SENSEX"] else atm_strike)
         option_pick = f"`{pe_strike} PUT (PE)`"
         entry_zone = f"₹{curr_price - 3:,.2f} - ₹{curr_price + 3:,.2f}"
         sl = round(curr_price + sl_dist, 2)
         tp = round(curr_price - tp_dist, 2)
-        bias_desc = "Spot breakdown below VWAP with 5/9 EMA bearish crossover."
+        signal_header = "🚨 **NEW AUTOMATED SCALP ALERT: SELL** 🔴"
+        bias_desc = "Spot breakdown below VWAP with 5/9 EMA bearish expansion."
     else:
+        if is_auto_scan:
+            LAST_SIGNAL_STATE[asset_name] = "NEUTRAL"
+            return None
         return (
             f"⚡ **LIVE MARKET ANALYSIS: {asset_name}**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"• Current Spot Price: **₹{curr_price:,.2f}**\n"
             f"• Live VWAP: **₹{vwap:,.2f}** | 5 EMA: **₹{ema_5:,.2f}**\n"
             f"• Market Status: **NO TRADE ZONE (Consolidation)**\n\n"
-            f"💡 *Price is trapped near VWAP. Awaiting clear breakout for 1:1.9 entry.*"
+            f"💡 *Price is trapped near VWAP. Awaiting breakout.*"
         )
 
-    return (
-        f"⚡ **LIVE INSTITUTIONAL SCALP SIGNAL: {asset_name}**\n"
+    # In Auto Scan mode, only trigger alert if signal changed
+    if is_auto_scan:
+        if LAST_SIGNAL_STATE[asset_name] == current_signal:
+            return None  # Already alerted for this signal move
+        LAST_SIGNAL_STATE[asset_name] = current_signal
+
+    report = (
+        f"{signal_header}\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"• **Signal Type:** {signal}\n"
+        f"• **Asset:** `{asset_name}`\n"
         f"• **Recommended Option:** {option_pick}\n"
         f"• **Current Spot Price:** ₹{curr_price:,.2f}\n"
-        f"• **Market Context:** {bias_desc}\n\n"
+        f"• **Trigger Reason:** {bias_desc}\n\n"
         f"🎯 **EXECUTION & RISK LEVELS (1:1.9 RRR)**\n"
         f"• **Entry Zone:** {entry_zone}\n"
         f"• **Stop Loss (SL):** ₹{sl:,.2f} (Risk: {sl_dist} pts)\n"
-        f"• **Take Profit (TP):** ₹{tp:,.2f} (Reward: {tp_dist} pts)\n"
-        f"• **Risk-to-Reward Ratio:** **1 : 1.9**\n\n"
-        f"📋 **Key Indicators:** VWAP = ₹{vwap} | 5 EMA = ₹{ema_5} | 9 EMA = ₹{ema_9}"
+        f"• **Take Profit (TP):** ₹{tp:,.2f} (Reward: {tp_dist} pts)\n\n"
+        f"📋 **Indicators:** VWAP = ₹{vwap} | 5 EMA = ₹{ema_5} | 9 EMA = ₹{ema_9}"
     )
 
+    return report
+
 # ==========================================
-# 4. RENDER WEB SERVER
+# 5. ALL-SEGMENT BACKGROUND AUTO-SCANNER
+# ==========================================
+def background_all_segment_scanner():
+    """Continuously scans all 7 assets every 60 seconds and fires alerts when signals form"""
+    logging.info("🚀 Background Auto-Scanner Engine Activated 24/7!")
+    time.sleep(10)
+    while True:
+        try:
+            for asset in ASSET_CONFIG:
+                alert_text = analyze_asset_scalp(asset, is_auto_scan=True)
+                if alert_text:
+                    logging.info(f"⚡ New Signal Triggered for {asset}! Dispatching Telegram Alert...")
+                    send_telegram_alert(alert_text)
+                time.sleep(2)  # Short delay between asset checks
+        except Exception as e:
+            logging.error(f"⚠️ Scanner Loop Error: {e}")
+        time.sleep(60)  # Scan every 1 minute
+
+# ==========================================
+# 6. RENDER WEB SERVER
 # ==========================================
 app_flask = Flask(__name__)
 
 @app_flask.route("/")
 def home():
-    return "🚀 Emerald Trade Agent Live!"
+    return "🚀 Emerald Trade Agent Live & Scanning All Segments 24/7!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app_flask.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 # ==========================================
-# 5. TELEGRAM HANDLERS
+# 7. TELEGRAM HANDLERS
 # ==========================================
 def get_main_keyboard():
     return InlineKeyboardMarkup([
@@ -222,23 +273,35 @@ def get_main_keyboard():
     ])
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🚀 *Institutional Trading Bot Ready!*\nSelect an asset for real-time options scalping analysis:", reply_markup=get_main_keyboard(), parse_mode="Markdown")
+    welcome_text = (
+        "🚀 *Institutional Trading Engine Online & Auto-Scanning!*\n\n"
+        "⚡ The bot is now continuously scanning **NIFTY, BANK NIFTY, SENSEX, CRUDE OIL, NATURAL GAS, GOLD, and SILVER** in the background.\n\n"
+        "🔔 You will receive instant push notification alerts here whenever a breakout or trade signal forms!\n\n"
+        "Or tap any button below for an instant manual analysis:"
+    )
+    await update.message.reply_text(welcome_text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
 
 async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if query.data.startswith("ANALYZE_"):
         asset = query.data.replace("ANALYZE_", "")
-        report = analyze_asset_scalp(asset)
+        report = analyze_asset_scalp(asset, is_auto_scan=False)
         await context.bot.send_message(chat_id=query.message.chat_id, text=report, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 # ==========================================
-# 6. MAIN EXECUTION
+# 8. MAIN EXECUTION ENTRYPOINT
 # ==========================================
 if __name__ == "__main__":
     initialize_fyers()
+
+    # Start Flask Web Server
     threading.Thread(target=run_flask, daemon=True).start()
 
+    # Start Background Auto-Scanner for All Segments
+    threading.Thread(target=background_all_segment_scanner, daemon=True).start()
+
+    # Build and Run Telegram Bot
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CallbackQueryHandler(button_callback_handler))
