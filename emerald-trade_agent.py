@@ -54,6 +54,9 @@ KOTAK_PIN = os.environ.get("KOTAK_PIN", "004482")
 KOTAK_CONSUMER_KEY = os.environ.get("KOTAK_CONSUMER_KEY", "9d08c4fe-4395-4057-9752-1e48b42ae317")
 KOTAK_CONSUMER_SECRET = os.environ.get("KOTAK_CONSUMER_SECRET", "JJSHPF4MXZQHWHVSXLN6B72XVY")
 
+# For the Self-Pinging Keep-Alive Script
+RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
+
 ALWAYS_ON_ASSETS = {
     "NIFTY": {"fyers": "NSE:NIFTY50-INDEX", "kotak": "NSE_IND:NIFTY 50", "yahoo": "^NSEI", "step": 50, "unit": "pts", "max_hold_mins": 12, "expiry_day": 3},
     "BANK NIFTY": {"fyers": "NSE:NIFTYBANK-INDEX", "kotak": "NSE_IND:NIFTY BANK", "yahoo": "^NSEBANK", "step": 100, "unit": "pts", "max_hold_mins": 12, "expiry_day": 2},
@@ -84,7 +87,7 @@ ALL_ASSETS = {**ALWAYS_ON_ASSETS, **ON_DEMAND_ASSETS}
 
 fyers = None
 kotak_neo = None
-STOP_ON_DEMAND_SIGNALS = False
+STOP_ON_DEMAND_SIGNALS = True 
 
 ACTIVE_SIGNALS = {}
 AVOIDED_SIGNALS = {}
@@ -112,7 +115,24 @@ def initialize_broker_apis():
             logging.error(f"❌ Kotak Neo Init Error: {e}")
 
 # ==========================================
-# 2. OPENING BELL VOLATILITY GUARD
+# 2. IN-CODE SELF-PINGING SERVER (KEEPS BOT AWAKE)
+# ==========================================
+def keep_awake_ping():
+    if not RENDER_EXTERNAL_URL:
+        logging.warning("⚠️ RENDER_EXTERNAL_URL is not set. Bot may go to sleep after 15 mins of inactivity.")
+        return
+        
+    logging.info(f"🔄 Heartbeat Initialized. Pinging {RENDER_EXTERNAL_URL} every 10 minutes.")
+    while True:
+        try:
+            time.sleep(600)  # Wait 10 minutes
+            response = requests.get(RENDER_EXTERNAL_URL, timeout=10)
+            logging.info(f"💓 Self-Ping Status: {response.status_code} - Bot kept awake!")
+        except Exception as e:
+            logging.error(f"⚠️ Self-Ping Failed: {e}")
+
+# ==========================================
+# 3. OPENING BELL VOLATILITY GUARD
 # ==========================================
 def is_market_opening_volatility_zone():
     tz = pytz.timezone("Asia/Kolkata")
@@ -120,7 +140,7 @@ def is_market_opening_volatility_zone():
     return now.hour == 9 and 15 <= now.minute <= 25
 
 # ==========================================
-# 3. TELEGRAM DISPATCHER
+# 4. TELEGRAM DISPATCHER
 # ==========================================
 def send_telegram_alert(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -131,7 +151,7 @@ def send_telegram_alert(message):
         logging.error(f"⚠️ Telegram Dispatch Error: {e}")
 
 # ==========================================
-# 4. TRIPLE DATA ENGINE (CHART DATA)
+# 5. CHART DATA ENGINE (OHLC)
 # ==========================================
 def fetch_usd_inr_rate():
     try:
@@ -201,9 +221,9 @@ def fetch_live_ohlc(asset_name, is_stock=False):
     return pd.DataFrame()
 
 # ==========================================
-# 5. REAL ITM OPTION PREMIUM FETCH ENGINE
+# 6. EXACT PURE-API PREMIUM ENGINE (NO GUESSWORK)
 # ==========================================
-def fetch_real_option_premium(asset_name, strike_price, option_type, spot_price):
+def fetch_real_option_premium(asset_name, strike_price, option_type):
     if fyers:
         try:
             exchange = "BSE" if asset_name == "SENSEX" else "NSE"
@@ -228,16 +248,11 @@ def fetch_real_option_premium(asset_name, strike_price, option_type, spot_price)
         except Exception:
             pass
 
-    intrinsic = max(0.0, spot_price - strike_price) if option_type == "CE" else max(0.0, strike_price - spot_price)
-    if asset_name in ["NIFTY", "FINNIFTY", "MIDCPNIFTY"]: time_value = 85.0 + (abs(spot_price - strike_price) * 0.10)
-    elif asset_name == "BANK NIFTY": time_value = 180.0 + (abs(spot_price - strike_price) * 0.15)
-    elif asset_name == "SENSEX": time_value = 280.0 + (abs(spot_price - strike_price) * 0.18)
-    else: time_value = spot_price * 0.01
-
-    return max(round(intrinsic + time_value, 1), 25.0)
+    # 🔥 PURE API ENFORCEMENT: Returns None if exact live premium cannot be fetched.
+    return None
 
 # ==========================================
-# 6. MATHEMATICALLY PERFECT INDICATORS & CPR
+# 7. PERFECTED INDICATORS & DAILY CPR
 # ==========================================
 def calculate_indicators(df):
     df["ema_5"] = df["close"].ewm(span=5, adjust=False).mean()
@@ -279,7 +294,7 @@ def calculate_indicators(df):
     return df
 
 # ==========================================
-# 7. QUICK TEXT COMMANDS
+# 8. QUICK TEXT COMMANDS
 # ==========================================
 def get_quick_market_summary(asset_name):
     df = fetch_live_ohlc(asset_name)
@@ -311,7 +326,7 @@ def get_quick_market_summary(asset_name):
     )
 
 # ==========================================
-# 8. INTRADAY STOCKS SCANNER
+# 9. PERFECTED INTRADAY STOCKS SCANNER
 # ==========================================
 def scan_top_4_stocks():
     selected_stocks = []
@@ -335,16 +350,26 @@ def scan_top_4_stocks():
 
         if len(selected_stocks) >= 4: break
 
-    if not selected_stocks: return "⚡ **INTRADAY STOCKS SCANNER**\n━━━━━━━━━━━━━━━━━━━━━\n💡 *No volume breakout stocks found outside CPR range.*"
-
     tz = pytz.timezone("Asia/Kolkata")
-    report = f"🎯 **TOP 4 INTRADAY BREAKOUT STOCKS ({datetime.now(tz).strftime('%I:%M %p')})**\n━━━━━━━━━━━━━━━━━━━━━\n"
+    time_stamp = datetime.now(tz).strftime('%I:%M:%S %p')
+
+    if not selected_stocks: 
+        return f"⚡ **INTRADAY STOCKS SCANNER** ({time_stamp})\n━━━━━━━━━━━━━━━━━━━━━\n💡 *No volume breakout stocks found outside CPR range.*"
+
+    report = f"🎯 **TOP 4 INTRADAY BREAKOUT STOCKS ({time_stamp})**\n━━━━━━━━━━━━━━━━━━━━━\n"
     for idx, s in enumerate(selected_stocks, 1):
-        report += f"**{idx}. {s['symbol']}** ({s['type']})\n• **CMP:** ₹{s['cmp']:,.2f}\n• **Entry Zone:** {s['entry']}\n• **Stop Loss (SL):** ₹{s['sl']:,.2f}\n• **Target:** ₹{s['tp']:,.2f}\n-------------------------------------\n"
+        report += (
+            f"**{idx}. {s['symbol']} ({s['type']})**\n"
+            f"• **CMP:** ₹{s['cmp']:,.2f}\n"
+            f"• **Entry Zone:** {s['entry']}\n"
+            f"• **Stop Loss (SL):** ₹{s['sl']:,.2f}\n"
+            f"• **Target:** ₹{s['tp']:,.2f}\n"
+            f"-------------------------------------\n"
+        )
     return report
 
 # ==========================================
-# 9. ANALYSIS ENGINE & AVOIDANCE NOTIFIER
+# 10. PURE-API ANALYSIS ENGINE & AVOIDANCE NOTIFIER
 # ==========================================
 def analyze_asset_scalp(asset_name, is_auto_scan=False):
     global ACTIVE_SIGNALS, AVOIDED_SIGNALS, STOP_ON_DEMAND_SIGNALS
@@ -385,7 +410,6 @@ def analyze_asset_scalp(asset_name, is_auto_scan=False):
 
     atm_strike = round(curr_price / step) * step
 
-    # Guard: CPR TRAP
     if cpr_bottom <= curr_price <= cpr_top:
         avoid_key = f"{asset_name}_CPR_TRAP"
         if is_auto_scan:
@@ -434,8 +458,17 @@ def analyze_asset_scalp(asset_name, is_auto_scan=False):
         if active and active.get("status") == "OPEN": return None
         if active and active.get("type") == current_signal_type and active.get("status") == "CLOSED": return None
 
+    real_opt_premium = fetch_real_option_premium(asset_name, itm_strike, opt_type)
+    if real_opt_premium is None:
+        avoid_key = f"{asset_name}_API_PREMIUM_FAIL"
+        if is_auto_scan:
+            if AVOIDED_SIGNALS.get(asset_name) != avoid_key:
+                AVOIDED_SIGNALS[asset_name] = avoid_key
+                return f"⚠️ **TRADE AVOIDED: {asset_name}** 🛑\n━━━━━━━━━━━━━━━━━━━━━\n• **Reason:** Broker API offline or unable to fetch Live Option Premium.\n💡 *Filtered out to avoid fake/blind premium calculations.*"
+            return None
+        return f"⚠️ **Data Fetch Error:** Unable to retrieve precise live Option Premium for `{asset_name}` from Broker API."
+
     AVOIDED_SIGNALS[asset_name] = "ACTIVE"
-    real_opt_premium = fetch_real_option_premium(asset_name, itm_strike, opt_type, curr_price)
     opt_sl_price = round(real_opt_premium - (spot_sl_pts * 0.65), 1)
     opt_tp_price = round(real_opt_premium + (spot_tp_pts * 0.65), 1)
 
@@ -466,7 +499,7 @@ def analyze_asset_scalp(asset_name, is_auto_scan=False):
     )
 
 # ==========================================
-# 10. SEGMENT-SPECIFIC EOD P&L CALCULATOR
+# 11. SEGMENT-SPECIFIC EOD P&L CALCULATOR
 # ==========================================
 def calculate_eod_performance(capital=10000.0, asset_filter=None):
     global DAILY_COMPLETED_TRADES
@@ -500,10 +533,7 @@ def calculate_eod_performance(capital=10000.0, asset_filter=None):
 
     risk_per_trade = capital * 0.02
     gross_profit = (win_count * (risk_per_trade * 1.85)) - (loss_count * risk_per_trade)
-    
-    # Adjusted for Zero-Brokerage accounts (e.g. mStock, Shoonya). Deducts only ₹20 for STT/Taxes.
-    brokerage_per_trade = 20.0 
-    total_brokerage = total_trades * brokerage_per_trade
+    total_brokerage = total_trades * 20.0
     net_earnings = gross_profit - total_brokerage
 
     return (
@@ -518,7 +548,7 @@ def calculate_eod_performance(capital=10000.0, asset_filter=None):
     )
 
 # ==========================================
-# 11. LIVE TRADE TRACKER & TRAILING SL TO COST
+# 12. LIVE TRADE TRACKER & TRAILING SL TO COST
 # ==========================================
 def track_active_trades():
     global ACTIVE_SIGNALS, DAILY_COMPLETED_TRADES
@@ -557,7 +587,6 @@ def track_active_trades():
             
         elif (sig_type == "BUY" and (low_price <= sl or cmp <= sl)) or (sig_type == "SELL" and (high_price >= sl or cmp >= sl)):
             ACTIVE_SIGNALS[asset_name]["status"] = "CLOSED"
-            # Distinguish between a Loss and a Trailed Breakeven
             if trade.get("trailed_to_cost", False) and sl == entry:
                 DAILY_COMPLETED_TRADES.append({"asset": asset_name, "result": "BREAKEVEN"})
                 send_telegram_alert(f"🛡️ **TRAILED SL HIT (BREAKEVEN)** 🟡\n• **Asset:** `{asset_name}` ({option})\n• **Exited at Cost:** ₹{sl:,.2f}")
@@ -566,7 +595,7 @@ def track_active_trades():
                 send_telegram_alert(f"🛑 **STOP LOSS HIT** 🔴\n• **Asset:** `{asset_name}` ({option})\n• **SL Hit:** ₹{sl:,.2f}")
 
 # ==========================================
-# 12. BACKGROUND SCANNER THREAD
+# 13. BACKGROUND SCANNER THREAD
 # ==========================================
 def background_all_segment_scanner():
     logging.info("🚀 Background Scanner Active 24/7!")
@@ -602,7 +631,7 @@ def background_all_segment_scanner():
         time.sleep(30)
 
 # ==========================================
-# 13. RENDER WEB SERVER
+# 14. RENDER WEB SERVER
 # ==========================================
 app_flask = Flask(__name__)
 @app_flask.route("/")
@@ -610,7 +639,7 @@ def home(): return "🚀 Emerald Trade Agent Live!"
 def run_flask(): app_flask.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), debug=False, use_reloader=False)
 
 # ==========================================
-# 14. TELEGRAM HANDLERS
+# 15. TELEGRAM HANDLERS
 # ==========================================
 def get_main_keyboard():
     pause_text = "▶️ RESUME SIGNALS" if STOP_ON_DEMAND_SIGNALS else "🛑 PAUSE SIGNALS"
@@ -656,18 +685,21 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         await context.bot.send_message(chat_id=query.message.chat_id, text=calculate_eod_performance(10000.0), parse_mode="Markdown", reply_markup=get_main_keyboard())
     elif query.data.startswith("ANALYZE_"):
         asset = query.data.replace("ANALYZE_", "")
-        STOP_ON_DEMAND_SIGNALS = False
         report = analyze_asset_scalp(asset, is_auto_scan=False)
         if report: await context.bot.send_message(chat_id=query.message.chat_id, text=report, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 if __name__ == "__main__":
     initialize_broker_apis()
+    
+    threading.Thread(target=keep_awake_ping, daemon=True).start()
     threading.Thread(target=run_flask, daemon=True).start()
     threading.Thread(target=background_all_segment_scanner, daemon=True).start()
+    
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("eod", eod_command))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), text_message_handler))
     app.add_handler(CallbackQueryHandler(button_callback_handler))
+    
     logging.info("✅ Starting Telegram Bot...")
     app.run_polling(drop_pending_updates=True)
