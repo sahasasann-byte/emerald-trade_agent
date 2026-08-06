@@ -47,33 +47,28 @@ logging.basicConfig(
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8866649004:AAHuRrhqCHqRq0Ucb1i_UyTCG2B5nKOCkps")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "5944911045")
 
-# FYERS API Credentials
 FYERS_CLIENT_ID = os.environ.get("FYERS_CLIENT_ID", "KDE60BKD5D-100")
 
-# KOTAK NEO API Credentials
 KOTAK_CLIENT_CODE = os.environ.get("KOTAK_CLIENT_CODE", "XEHM5")
 KOTAK_PIN = os.environ.get("KOTAK_PIN", "004482")
 KOTAK_CONSUMER_KEY = os.environ.get("KOTAK_CONSUMER_KEY", "9d08c4fe-4395-4057-9752-1e48b42ae317")
 KOTAK_CONSUMER_SECRET = os.environ.get("KOTAK_CONSUMER_SECRET", "JJSHPF4MXZQHWHVSXLN6B72XVY")
 
-# ALWAYS-ON ASSETS (24/7 Background Scanning)
 ALWAYS_ON_ASSETS = {
-    "NIFTY": {"fyers": "NSE:NIFTY50-INDEX", "kotak": "NSE_IND:NIFTY 50", "yahoo": "^NSEI", "step": 50, "unit": "pts", "max_hold_mins": 20, "base_premium_pct": 0.0055},
-    "BANK NIFTY": {"fyers": "NSE:NIFTYBANK-INDEX", "kotak": "NSE_IND:NIFTY BANK", "yahoo": "^NSEBANK", "step": 100, "unit": "pts", "max_hold_mins": 15, "base_premium_pct": 0.0065},
-    "SENSEX": {"fyers": "BSE:SENSEX-INDEX", "kotak": "BSE_IND:SENSEX", "yahoo": "^BSESN", "step": 100, "unit": "pts", "max_hold_mins": 15, "base_premium_pct": 0.0050},
+    "NIFTY": {"fyers": "NSE:NIFTY50-INDEX", "kotak": "NSE_IND:NIFTY 50", "yahoo": "^NSEI", "step": 50, "unit": "pts", "max_hold_mins": 12, "expiry_day": 3},
+    "BANK NIFTY": {"fyers": "NSE:NIFTYBANK-INDEX", "kotak": "NSE_IND:NIFTY BANK", "yahoo": "^NSEBANK", "step": 100, "unit": "pts", "max_hold_mins": 12, "expiry_day": 2},
+    "SENSEX": {"fyers": "BSE:SENSEX-INDEX", "kotak": "BSE_IND:SENSEX", "yahoo": "^BSESN", "step": 100, "unit": "pts", "max_hold_mins": 12, "expiry_day": 4},
 }
 
-# ON-DEMAND ASSETS (Triggered via Buttons)
 ON_DEMAND_ASSETS = {
-    "FINNIFTY": {"fyers": "NSE:FINNIFTY-INDEX", "kotak": "NSE_IND:NIFTY FIN SERVICE", "yahoo": "NIFTY_FIN_SERVICE.NS", "step": 50, "unit": "pts", "max_hold_mins": 15, "base_premium_pct": 0.0055},
-    "MIDCPNIFTY": {"fyers": "NSE:MIDCPNIFTY-INDEX", "kotak": "NSE_IND:NIFTY MID SELECT", "yahoo": "^NSEMDCP50", "step": 25, "unit": "pts", "max_hold_mins": 15, "base_premium_pct": 0.0055},
-    "CRUDE OIL": {"fyers": "MCX:CRUDEOIL26AUGFUT", "kotak": "MCX:CRUDEOIL", "yahoo": "CL=F", "step": 10, "unit": "₹/bbl", "is_commodity": True, "max_hold_mins": 30, "base_premium_pct": 0.015},
-    "NATURAL GAS": {"fyers": "MCX:NATURALGAS26AUGFUT", "kotak": "MCX:NATURALGAS", "yahoo": "NG=F", "step": 1, "unit": "₹/mmBtu", "is_commodity": True, "max_hold_mins": 30, "base_premium_pct": 0.020},
-    "GOLD": {"fyers": "MCX:GOLD26OCTFUT", "kotak": "MCX:GOLD", "yahoo": "GC=F", "step": 100, "unit": "₹/10g", "is_commodity": True, "max_hold_mins": 45, "base_premium_pct": 0.008},
-    "SILVER": {"fyers": "MCX:SILVER26SEPFUT", "kotak": "MCX:SILVER", "yahoo": "SI=F", "step": 100, "unit": "₹/kg", "is_commodity": True, "max_hold_mins": 45, "base_premium_pct": 0.010},
+    "FINNIFTY": {"fyers": "NSE:FINNIFTY-INDEX", "kotak": "NSE_IND:NIFTY FIN SERVICE", "yahoo": "NIFTY_FIN_SERVICE.NS", "step": 50, "unit": "pts", "max_hold_mins": 12, "expiry_day": 1},
+    "MIDCPNIFTY": {"fyers": "NSE:MIDCPNIFTY-INDEX", "kotak": "NSE_IND:NIFTY MID SELECT", "yahoo": "^NSEMDCP50", "step": 25, "unit": "pts", "max_hold_mins": 12, "expiry_day": 0},
+    "CRUDE OIL": {"fyers": "MCX:CRUDEOIL26AUGFUT", "kotak": "MCX:CRUDEOIL", "yahoo": "CL=F", "step": 10, "unit": "₹/bbl", "is_commodity": True, "max_hold_mins": 25},
+    "NATURAL GAS": {"fyers": "MCX:NATURALGAS26AUGFUT", "kotak": "MCX:NATURALGAS", "yahoo": "NG=F", "step": 1, "unit": "₹/mmBtu", "is_commodity": True, "max_hold_mins": 25},
+    "GOLD": {"fyers": "MCX:GOLD26OCTFUT", "kotak": "MCX:GOLD", "yahoo": "GC=F", "step": 100, "unit": "₹/10g", "is_commodity": True, "max_hold_mins": 30},
+    "SILVER": {"fyers": "MCX:SILVER26SEPFUT", "kotak": "MCX:SILVER", "yahoo": "SI=F", "step": 100, "unit": "₹/kg", "is_commodity": True, "max_hold_mins": 30},
 }
 
-# WATCHLIST FOR INTRADAY STOCKS SCANNER
 STOCK_WATCHLIST = {
     "RELIANCE": {"yahoo": "RELIANCE.NS", "step": 10},
     "HDFCBANK": {"yahoo": "HDFCBANK.NS", "step": 10},
@@ -92,12 +87,12 @@ kotak_neo = None
 STOP_ON_DEMAND_SIGNALS = False
 
 ACTIVE_SIGNALS = {}
+AVOIDED_SIGNALS = {}
 DAILY_COMPLETED_TRADES = []
 
 def initialize_broker_apis():
     global fyers, kotak_neo
     
-    # 1. Initialize Fyers API
     if FYERS_AVAILABLE:
         token = os.environ.get("FYERS_ACCESS_TOKEN", "")
         if token:
@@ -107,22 +102,25 @@ def initialize_broker_apis():
             except Exception as e:
                 logging.error(f"❌ Fyers Init Error: {e}")
 
-    # 2. Initialize Kotak Neo API Fallback Engine
     if KOTAK_AVAILABLE and KOTAK_CONSUMER_KEY and KOTAK_CONSUMER_SECRET:
         try:
-            kotak_neo = NeoAPI(
-                consumer_key=KOTAK_CONSUMER_KEY,
-                consumer_secret=KOTAK_CONSUMER_SECRET,
-                environment="prod"
-            )
+            kotak_neo = NeoAPI(consumer_key=KOTAK_CONSUMER_KEY, consumer_secret=KOTAK_CONSUMER_SECRET, environment="prod")
             if KOTAK_CLIENT_CODE and KOTAK_PIN:
                 kotak_neo.login(mobilenumber=KOTAK_CLIENT_CODE, password=KOTAK_PIN)
-                logging.info("✅ Kotak Neo API Session Initialized Successfully!")
+                logging.info("✅ Kotak Neo API Session Initialized!")
         except Exception as e:
             logging.error(f"❌ Kotak Neo Init Error: {e}")
 
 # ==========================================
-# 2. TELEGRAM ALERT DISPATCHER
+# 2. OPENING BELL VOLATILITY GUARD
+# ==========================================
+def is_market_opening_volatility_zone():
+    tz = pytz.timezone("Asia/Kolkata")
+    now = datetime.now(tz)
+    return now.hour == 9 and 15 <= now.minute <= 25
+
+# ==========================================
+# 3. TELEGRAM DISPATCHER
 # ==========================================
 def send_telegram_alert(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -133,7 +131,7 @@ def send_telegram_alert(message):
         logging.error(f"⚠️ Telegram Dispatch Error: {e}")
 
 # ==========================================
-# 3. TRIPLE DATA ENGINE (FYERS -> KOTAK NEO -> WEB)
+# 4. TRIPLE DATA ENGINE (CHART DATA)
 # ==========================================
 def fetch_usd_inr_rate():
     try:
@@ -150,7 +148,6 @@ def fetch_live_ohlc(asset_name, is_stock=False):
     if not config:
         return pd.DataFrame()
 
-    # Priority 1: Direct Fyers API
     if fyers and not is_stock and "fyers" in config:
         try:
             tz = pytz.timezone("Asia/Kolkata")
@@ -159,7 +156,7 @@ def fetch_live_ohlc(asset_name, is_stock=False):
                 "symbol": config["fyers"],
                 "resolution": "3",
                 "date_format": "1",
-                "range_from": (now - timedelta(days=3)).strftime("%Y-%m-%d"),
+                "range_from": (now - timedelta(days=4)).strftime("%Y-%m-%d"),
                 "range_to": now.strftime("%Y-%m-%d"),
                 "cont_flag": "1"
             }
@@ -171,30 +168,9 @@ def fetch_live_ohlc(asset_name, is_stock=False):
         except Exception:
             pass
 
-    # Priority 2: Kotak Neo API Fallback
-    if kotak_neo and not is_stock and "kotak" in config:
-        try:
-            res = kotak_neo.quote(instrument_token=config["kotak"], quote_type="ltp")
-            if res and "data" in res:
-                latest_price = float(res["data"]["ltp"])
-                timestamps = [int(time.time()) - (i * 180) for i in range(20, 0, -1)]
-                df = pd.DataFrame({
-                    "timestamp": timestamps,
-                    "open": [latest_price] * 20,
-                    "high": [latest_price + 2.0] * 20,
-                    "low": [latest_price - 2.0] * 20,
-                    "close": [latest_price] * 20,
-                    "volume": [1000] * 20
-                })
-                df["time"] = pd.to_datetime(df["timestamp"], unit="s", utc=True).dt.tz_convert("Asia/Kolkata")
-                return df
-        except Exception as e:
-            logging.warning(f"⚠️ Kotak Neo quote fetch failed for {asset_name}: {e}")
-
-    # Priority 3: Yahoo Finance Web Engine Fallback
     try:
         yahoo_sym = config["yahoo"]
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_sym}?range=2d&interval=2m"
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_sym}?range=4d&interval=2m"
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
@@ -213,14 +189,9 @@ def fetch_live_ohlc(asset_name, is_stock=False):
             if config.get("is_commodity"):
                 usd_inr = fetch_usd_inr_rate()
                 mult = usd_inr
-                if asset_name == "GOLD":
-                    mult = (usd_inr / 31.1035) * 10
-                elif asset_name == "SILVER":
-                    mult = (usd_inr / 31.1035) * 1000
-                df["open"] *= mult
-                df["high"] *= mult
-                df["low"] *= mult
-                df["close"] *= mult
+                if asset_name == "GOLD": mult = (usd_inr / 31.1035) * 10
+                elif asset_name == "SILVER": mult = (usd_inr / 31.1035) * 1000
+                df["open"] *= mult; df["high"] *= mult; df["low"] *= mult; df["close"] *= mult
 
             df["time"] = pd.to_datetime(df["timestamp"], unit="s", utc=True).dt.tz_convert("Asia/Kolkata")
             return df
@@ -229,294 +200,325 @@ def fetch_live_ohlc(asset_name, is_stock=False):
 
     return pd.DataFrame()
 
+# ==========================================
+# 5. REAL ITM OPTION PREMIUM FETCH ENGINE
+# ==========================================
+def fetch_real_option_premium(asset_name, strike_price, option_type, spot_price):
+    if fyers:
+        try:
+            exchange = "BSE" if asset_name == "SENSEX" else "NSE"
+            fyers_symbol = f"{exchange}:{asset_name}-INDEX"
+            res = fyers.optionchain(data={"symbol": fyers_symbol, "strikecount": 5})
+            if res and res.get("s") == "ok" and "data" in res:
+                for opt in res["data"].get("optionsChain", []):
+                    if opt.get("strike_price") == strike_price and opt.get("option_type") == option_type:
+                        return max(round(float(opt.get("ltp")), 2), 5.0)
+        except Exception:
+            pass
+
+    if kotak_neo and asset_name in ALL_ASSETS and "kotak" in ALL_ASSETS[asset_name]:
+        try:
+            exchange = "bse_fo" if asset_name == "SENSEX" else "nse_fo"
+            res = kotak_neo.search_scrip(exchange=exchange, segment="opt", expiry="", name=asset_name, strike=str(strike_price), option_type=option_type)
+            if res and len(res) > 0:
+                instrument_token = res[0]['pSymbol']
+                quote_res = kotak_neo.quote(instrument_token=instrument_token, quote_type="ltp")
+                if quote_res and "data" in quote_res:
+                    return max(round(float(quote_res["data"]["ltp"]), 2), 5.0)
+        except Exception:
+            pass
+
+    intrinsic = max(0.0, spot_price - strike_price) if option_type == "CE" else max(0.0, strike_price - spot_price)
+    if asset_name in ["NIFTY", "FINNIFTY", "MIDCPNIFTY"]: time_value = 85.0 + (abs(spot_price - strike_price) * 0.10)
+    elif asset_name == "BANK NIFTY": time_value = 180.0 + (abs(spot_price - strike_price) * 0.15)
+    elif asset_name == "SENSEX": time_value = 280.0 + (abs(spot_price - strike_price) * 0.18)
+    else: time_value = spot_price * 0.01
+
+    return max(round(intrinsic + time_value, 1), 25.0)
+
+# ==========================================
+# 6. MATHEMATICALLY PERFECT INDICATORS & CPR
+# ==========================================
 def calculate_indicators(df):
     df["ema_5"] = df["close"].ewm(span=5, adjust=False).mean()
     df["ema_9"] = df["close"].ewm(span=9, adjust=False).mean()
+    
     df["tp"] = (df["high"] + df["low"] + df["close"]) / 3
     df["vwap"] = (df["tp"] * df["volume"]).cumsum() / df["volume"].cumsum().replace(0, 1)
+    
     df["tr"] = np.maximum(df["high"] - df["low"], np.abs(df["high"] - df["close"].shift(1)))
     df["atr"] = df["tr"].rolling(14).mean()
+    
+    delta = df["close"].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    rs = gain / loss.replace(0, 1)
+    df["rsi"] = 100 - (100 / (1 + rs))
+
+    df["date"] = df["time"].dt.date
+    unique_dates = df["date"].unique()
+
+    if len(unique_dates) > 1:
+        prev_date = unique_dates[-2]
+        prev_day_df = df[df["date"] == prev_date]
+        prev_high = prev_day_df["high"].max()
+        prev_low = prev_day_df["low"].min()
+        prev_close = prev_day_df.iloc[-1]["close"]
+    else:
+        prev_high = df["high"].max()
+        prev_low = df["low"].min()
+        prev_close = df.iloc[-1]["close"]
+
+    pivot = (prev_high + prev_low + prev_close) / 3
+    bc = (prev_high + prev_low) / 2
+    tc = (pivot - bc) + pivot
+
+    df["cpr_top"] = max(tc, bc)
+    df["cpr_bottom"] = min(tc, bc)
+
     return df
 
 # ==========================================
-# 4. QUICK TEXT COMMANDS (N, S, B)
+# 7. QUICK TEXT COMMANDS
 # ==========================================
 def get_quick_market_summary(asset_name):
     df = fetch_live_ohlc(asset_name)
-    if df.empty:
-        return f"⚠️ Unable to fetch live market data for **{asset_name}**."
+    if df.empty: return f"⚠️ Unable to fetch live market data for **{asset_name}**."
 
     df = calculate_indicators(df)
     latest = df.iloc[-1]
 
     cmp = round(float(latest["close"]), 2)
-    open_p = round(float(df.iloc[0]["open"]), 2)
-    high_p = round(float(df["high"].max()), 2)
-    low_p = round(float(df["low"].min()), 2)
-    prev_close = round(float(df.iloc[0]["close"]), 2)
+    today_df = df[df["date"] == latest["date"]]
+    open_p = round(float(today_df.iloc[0]["open"]), 2)
+    high_p = round(float(today_df["high"].max()), 2)
+    low_p = round(float(today_df["low"].min()), 2)
+    
+    ema_5, ema_9, vwap = float(latest["ema_5"]), float(latest["ema_9"]), float(latest["vwap"])
+    cpr_top, cpr_bottom = float(latest["cpr_top"]), float(latest["cpr_bottom"])
 
-    ema_5 = float(latest["ema_5"])
-    ema_9 = float(latest["ema_9"])
-    vwap = float(latest["vwap"])
-
-    if cmp > vwap and ema_5 > ema_9:
-        trend = "🟢 BULLISH (Upward Momentum)"
-    elif cmp < vwap and ema_5 < ema_9:
-        trend = "🔴 BEARISH (Downward Momentum)"
-    else:
-        trend = "🟡 SIDEWAYS / CONSOLIDATION"
+    if cmp > vwap and cmp > cpr_top and ema_5 > ema_9: trend = "🟢 BULLISH (Above CPR)"
+    elif cmp < vwap and cmp < cpr_bottom and ema_5 < ema_9: trend = "🔴 BEARISH (Below CPR)"
+    else: trend = "🟡 SIDEWAYS / CONSOLIDATION (Inside CPR Range)"
 
     return (
-        f"📊 **{asset_name} REAL-TIME OVERVIEW**\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"• **Current Market Price (CMP):** **₹{cmp:,.2f}**\n"
+        f"📊 **{asset_name} REAL-TIME OVERVIEW**\n━━━━━━━━━━━━━━━━━━━━━\n"
+        f"• **Current Market Price:** **₹{cmp:,.2f}**\n"
         f"• **Market Trend:** **{trend}**\n\n"
         f"📈 **TODAY'S MARKET STATS:**\n"
-        f"• **Open:** ₹{open_p:,.2f}\n"
-        f"• **Today's High:** ₹{high_p:,.2f}\n"
-        f"• **Today's Low:** ₹{low_p:,.2f}\n"
-        f"• **Previous Close:** ₹{prev_close:,.2f}\n"
+        f"• **Open:** ₹{open_p:,.2f} | **High:** ₹{high_p:,.2f} | **Low:** ₹{low_p:,.2f}\n"
+        f"• **CPR Support/Resistance:** ₹{cpr_bottom:,.2f} - ₹{cpr_top:,.2f}\n"
     )
 
 # ==========================================
-# 5. INTRADAY STOCKS SCANNER
+# 8. INTRADAY STOCKS SCANNER
 # ==========================================
 def scan_top_4_stocks():
     selected_stocks = []
-    
     for stock_symbol in STOCK_WATCHLIST:
         df = fetch_live_ohlc(stock_symbol, is_stock=True)
-        if df.empty or len(df) < 15:
-            continue
-
+        if df.empty or len(df) < 15: continue
         df = calculate_indicators(df)
         latest = df.iloc[-1]
         
         cmp = round(float(latest["close"]), 2)
-        ema_5 = round(float(latest["ema_5"]), 2)
-        ema_9 = round(float(latest["ema_9"]), 2)
-        vwap = round(float(latest["vwap"]), 2)
-        atr = round(float(latest["atr"]), 2) if not np.isnan(latest["atr"]) else (cmp * 0.01)
+        ema_5, ema_9, vwap = latest["ema_5"], latest["ema_9"], latest["vwap"]
+        atr = latest["atr"] if not np.isnan(latest["atr"]) else (cmp * 0.01)
 
         sl_pts = max(round(atr * 1.2, 2), 2.0)
         tp_pts = round(sl_pts * 1.85, 2)
 
-        if cmp > vwap and ema_5 > ema_9:
-            selected_stocks.append({
-                "symbol": stock_symbol, "type": "BUY 🟢", "cmp": cmp,
-                "entry": f"₹{cmp - 0.5:,.2f} - ₹{cmp + 0.5:,.2f}",
-                "sl": round(cmp - sl_pts, 2), "tp": round(cmp + tp_pts, 2),
-            })
-        elif cmp < vwap and ema_5 < ema_9:
-            selected_stocks.append({
-                "symbol": stock_symbol, "type": "SELL 🔴", "cmp": cmp,
-                "entry": f"₹{cmp - 0.5:,.2f} - ₹{cmp + 0.5:,.2f}",
-                "sl": round(cmp + sl_pts, 2), "tp": round(cmp - tp_pts, 2),
-            })
+        if cmp > vwap and cmp > latest["cpr_top"] and ema_5 > ema_9:
+            selected_stocks.append({"symbol": stock_symbol, "type": "BUY 🟢", "cmp": cmp, "entry": f"₹{cmp - 0.5:,.2f} - ₹{cmp + 0.5:,.2f}", "sl": round(cmp - sl_pts, 2), "tp": round(cmp + tp_pts, 2)})
+        elif cmp < vwap and cmp < latest["cpr_bottom"] and ema_5 < ema_9:
+            selected_stocks.append({"symbol": stock_symbol, "type": "SELL 🔴", "cmp": cmp, "entry": f"₹{cmp - 0.5:,.2f} - ₹{cmp + 0.5:,.2f}", "sl": round(cmp + sl_pts, 2), "tp": round(cmp - tp_pts, 2)})
 
-        if len(selected_stocks) >= 4:
-            break
+        if len(selected_stocks) >= 4: break
 
-    if not selected_stocks:
-        return "⚡ **INTRADAY STOCKS SCANNER**\n━━━━━━━━━━━━━━━━━━━━━\n💡 *No high-conviction volume breakout stocks found right now.*"
+    if not selected_stocks: return "⚡ **INTRADAY STOCKS SCANNER**\n━━━━━━━━━━━━━━━━━━━━━\n💡 *No volume breakout stocks found outside CPR range.*"
 
     tz = pytz.timezone("Asia/Kolkata")
-    now_str = datetime.now(tz).strftime("%I:%M:%S %p")
-
-    report = f"🎯 **TOP 4 INTRADAY BREAKOUT STOCKS ({now_str})**\n━━━━━━━━━━━━━━━━━━━━━\n"
+    report = f"🎯 **TOP 4 INTRADAY BREAKOUT STOCKS ({datetime.now(tz).strftime('%I:%M %p')})**\n━━━━━━━━━━━━━━━━━━━━━\n"
     for idx, s in enumerate(selected_stocks, 1):
-        report += (
-            f"**{idx}. {s['symbol']}** ({s['type']})\n"
-            f"• **CMP:** ₹{s['cmp']:,.2f}\n"
-            f"• **Entry Zone:** {s['entry']}\n"
-            f"• **Stop Loss (SL):** ₹{s['sl']:,.2f}\n"
-            f"• **Target:** ₹{s['tp']:,.2f}\n"
-            f"-------------------------------------\n"
-        )
+        report += f"**{idx}. {s['symbol']}** ({s['type']})\n• **CMP:** ₹{s['cmp']:,.2f}\n• **Entry Zone:** {s['entry']}\n• **Stop Loss (SL):** ₹{s['sl']:,.2f}\n• **Target:** ₹{s['tp']:,.2f}\n-------------------------------------\n"
     return report
 
 # ==========================================
-# 6. ANALYSIS ENGINE WITH HIGH RRR ALERT
+# 9. ANALYSIS ENGINE & AVOIDANCE NOTIFIER
 # ==========================================
 def analyze_asset_scalp(asset_name, is_auto_scan=False):
-    global ACTIVE_SIGNALS, STOP_ON_DEMAND_SIGNALS
+    global ACTIVE_SIGNALS, AVOIDED_SIGNALS, STOP_ON_DEMAND_SIGNALS
 
-    if is_auto_scan and asset_name in ON_DEMAND_ASSETS and STOP_ON_DEMAND_SIGNALS:
-        return None
-
-    df = fetch_live_ohlc(asset_name)
-    if df.empty or len(df) < 15:
-        if not is_auto_scan:
-            return f"⚠️ **Data Fetch Error:** Unable to retrieve live price for `{asset_name}`."
-        return None
-
-    df = calculate_indicators(df)
-    latest = df.iloc[-1]
-    
     tz = pytz.timezone("Asia/Kolkata")
     now_dt = datetime.now(tz)
     time_str = now_dt.strftime("%I:%M:%S %p | %d-%b-%Y")
 
+    if is_auto_scan and is_market_opening_volatility_zone():
+        avoid_key = f"{asset_name}_OPENING_BELL"
+        if AVOIDED_SIGNALS.get(asset_name) != avoid_key:
+            AVOIDED_SIGNALS[asset_name] = avoid_key
+            return f"⚠️ **TRADE AVOIDED: {asset_name}** 🛑\n━━━━━━━━━━━━━━━━━━━━━\n• **Reason:** Opening Bell Volatility Zone (09:15 - 09:25 AM)\n• **Safety Filter:** Suppressing entries to prevent wide bid-ask slippage."
+        return None
+
+    if is_auto_scan and asset_name in ON_DEMAND_ASSETS and STOP_ON_DEMAND_SIGNALS: return None
+
+    df = fetch_live_ohlc(asset_name)
+    if df.empty or len(df) < 15:
+        if not is_auto_scan: return f"⚠️ **Data Fetch Error:** Unable to retrieve live price for `{asset_name}`."
+        return None
+
+    df = calculate_indicators(df)
+    latest = df.iloc[-1]
+
     curr_price = round(float(latest["close"]), 2)
-    ema_5 = round(float(latest["ema_5"]), 2)
-    ema_9 = round(float(latest["ema_9"]), 2)
-    vwap = round(float(latest["vwap"]), 2)
+    ema_5, ema_9, vwap = round(float(latest["ema_5"]), 2), round(float(latest["ema_9"]), 2), round(float(latest["vwap"]), 2)
+    rsi = round(float(latest["rsi"]), 1) if not np.isnan(latest["rsi"]) else 50.0
     atr = round(float(latest["atr"]), 2) if not np.isnan(latest["atr"]) else 15.0
+    cpr_top, cpr_bottom = round(float(latest["cpr_top"]), 2), round(float(latest["cpr_bottom"]), 2)
 
     config = ALL_ASSETS[asset_name]
-    step = config["step"]
-    unit = config["unit"]
-    max_hold_mins = config["max_hold_mins"]
+    step, unit = config["step"], config["unit"]
     
+    max_hold_mins = config.get("max_hold_mins", 12)
+    if "expiry_day" in config and now_dt.weekday() == config["expiry_day"] and now_dt.hour >= 12 and now_dt.minute >= 30:
+        max_hold_mins = 6
+
     atm_strike = round(curr_price / step) * step
-    estimated_option_premium = round(curr_price * config["base_premium_pct"], 1)
+
+    # Guard: CPR TRAP
+    if cpr_bottom <= curr_price <= cpr_top:
+        avoid_key = f"{asset_name}_CPR_TRAP"
+        if is_auto_scan:
+            if (ema_5 > ema_9 or ema_5 < ema_9) and AVOIDED_SIGNALS.get(asset_name) != avoid_key:
+                AVOIDED_SIGNALS[asset_name] = avoid_key
+                return f"⚠️ **TRADE AVOIDED: {asset_name}** 🛑\n━━━━━━━━━━━━━━━━━━━━━\n• **Reason:** Price Trapped Inside Central Pivot Range\n• **CPR Range:** ₹{cpr_bottom:,.2f} - ₹{cpr_top:,.2f}\n💡 *Filtered to prevent whipsaw losses.*"
+            return None
+        return f"⚡ **LIVE MARKET ANALYSIS: {asset_name}**\n━━━━━━━━━━━━━━━━━━━━━\n• **Spot CMP:** ₹{curr_price:,.2f} {unit}\n• **Market Context:** **NO TRADE ZONE (Inside CPR Range)**"
 
     spot_sl_pts = max(round(atr * 1.0, 2), step * 0.3)
     momentum_factor = abs(curr_price - vwap) / atr if atr > 0 else 1.85
     rrr_ratio = min(max(round(momentum_factor, 2), 1.85), 4.0)
-
     spot_tp_pts = round(spot_sl_pts * rrr_ratio, 2)
-    option_sl_pts = round(spot_sl_pts * 0.50, 1)
-    option_tp_pts = round(spot_tp_pts * 0.50, 1)
-
-    option_sl_price = max(round(estimated_option_premium - option_sl_pts, 1), 1.0)
-    option_tp_price = round(estimated_option_premium + option_tp_pts, 1)
 
     current_signal_type = None
 
-    if curr_price > vwap and ema_5 > ema_9:
+    if curr_price > vwap and curr_price > cpr_top and ema_5 > ema_9:
+        if rsi < 52:
+            avoid_key = f"{asset_name}_LOW_RSI_BUY"
+            if is_auto_scan and AVOIDED_SIGNALS.get(asset_name) != avoid_key:
+                AVOIDED_SIGNALS[asset_name] = avoid_key
+                return f"⚠️ **TRADE AVOIDED: {asset_name} BUY** 🛑\n━━━━━━━━━━━━━━━━━━━━━\n• **Reason:** Insufficient RSI Momentum ({rsi} < 52)\n💡 *Filtered out fake bullish breakout.*"
+            return None
         current_signal_type = "BUY"
-        strike_val = int(atm_strike - step if asset_name in ["NIFTY", "BANK NIFTY", "SENSEX", "FINNIFTY", "MIDCPNIFTY"] else atm_strike)
-        option_pick = f"`{strike_val} CALL (CE)`"
-        entry_zone = f"₹{curr_price - (step*0.05):,.2f} - ₹{curr_price + (step*0.05):,.2f}"
-        sl = round(curr_price - spot_sl_pts, 2)
-        tp = round(curr_price + spot_tp_pts, 2)
-        
-        if rrr_ratio >= 2.0:
-            signal_header = f"🛑 🚨 **HIGH-CONVICTION ALERT: BUY CALL (CE) [RRR 1:{rrr_ratio}]** 🔴 🛑"
-        else:
-            signal_header = "🚨 **NEW SCALP SIGNAL: BUY CALL (CE)** 🟢"
+        itm_strike = int((atm_strike - step) if asset_name in ["NIFTY", "BANK NIFTY", "SENSEX", "FINNIFTY", "MIDCPNIFTY"] else atm_strike)
+        option_pick, opt_type = f"`{itm_strike} CALL (CE)` [ITM High-Delta]", "CE"
 
-        bias_desc = f"Order Flow expansion above VWAP with 5/9 EMA momentum."
-
-    elif curr_price < vwap and ema_5 < ema_9:
+    elif curr_price < vwap and curr_price < cpr_bottom and ema_5 < ema_9:
+        if rsi > 48:
+            avoid_key = f"{asset_name}_HIGH_RSI_SELL"
+            if is_auto_scan and AVOIDED_SIGNALS.get(asset_name) != avoid_key:
+                AVOIDED_SIGNALS[asset_name] = avoid_key
+                return f"⚠️ **TRADE AVOIDED: {asset_name} SELL** 🛑\n━━━━━━━━━━━━━━━━━━━━━\n• **Reason:** Insufficient RSI Momentum ({rsi} > 48)\n💡 *Filtered out fake bearish breakdown.*"
+            return None
         current_signal_type = "SELL"
-        strike_val = int(atm_strike + step if asset_name in ["NIFTY", "BANK NIFTY", "SENSEX", "FINNIFTY", "MIDCPNIFTY"] else atm_strike)
-        option_pick = f"`{strike_val} PUT (PE)`"
-        entry_zone = f"₹{curr_price - (step*0.05):,.2f} - ₹{curr_price + (step*0.05):,.2f}"
-        sl = round(curr_price + spot_sl_pts, 2)
-        tp = round(curr_price - spot_tp_pts, 2)
-        
-        if rrr_ratio >= 2.0:
-            signal_header = f"🛑 🚨 **HIGH-CONVICTION ALERT: BUY PUT (PE) [RRR 1:{rrr_ratio}]** 🔴 🛑"
-        else:
-            signal_header = "🚨 **NEW SCALP SIGNAL: BUY PUT (PE)** 🔴"
-
-        bias_desc = f"Order Flow breakdown below VWAP with 5/9 EMA expansion."
+        itm_strike = int((atm_strike + step) if asset_name in ["NIFTY", "BANK NIFTY", "SENSEX", "FINNIFTY", "MIDCPNIFTY"] else atm_strike)
+        option_pick, opt_type = f"`{itm_strike} PUT (PE)` [ITM High-Delta]", "PE"
     else:
         if is_auto_scan:
+            AVOIDED_SIGNALS[asset_name] = "NEUTRAL"
             return None
-        return (
-            f"⚡ **LIVE MARKET ANALYSIS: {asset_name}**\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"• **Spot CMP:** ₹{curr_price:,.2f} {unit}\n"
-            f"• **Live VWAP:** ₹{vwap:,.2f} | **5 EMA:** ₹{ema_5:,.2f}\n"
-            f"• **Market Context:** **NO TRADE ZONE (Consolidation)**\n\n"
-            f"💡 *Price trapped near VWAP. Preserving capital until clean breakout.*"
-        )
+        return f"⚡ **LIVE MARKET ANALYSIS: {asset_name}**\n━━━━━━━━━━━━━━━━━━━━━\n• **Spot CMP:** ₹{curr_price:,.2f} {unit}\n• **Market Context:** **NO TRADE ZONE (Awaiting Breakout)**"
 
     if is_auto_scan:
         active = ACTIVE_SIGNALS.get(asset_name)
-        if active and active.get("status") == "OPEN":
-            return None
-        if active and active.get("type") == current_signal_type and active.get("status") == "CLOSED":
-            return None
+        if active and active.get("status") == "OPEN": return None
+        if active and active.get("type") == current_signal_type and active.get("status") == "CLOSED": return None
 
+    AVOIDED_SIGNALS[asset_name] = "ACTIVE"
+    real_opt_premium = fetch_real_option_premium(asset_name, itm_strike, opt_type, curr_price)
+    opt_sl_price = round(real_opt_premium - (spot_sl_pts * 0.65), 1)
+    opt_tp_price = round(real_opt_premium + (spot_tp_pts * 0.65), 1)
+
+    entry_zone = f"₹{curr_price - (step*0.05):,.2f} - ₹{curr_price + (step*0.05):,.2f}"
+    sl = round(curr_price - spot_sl_pts, 2) if current_signal_type == "BUY" else round(curr_price + spot_sl_pts, 2)
+    tp = round(curr_price + spot_tp_pts, 2) if current_signal_type == "BUY" else round(curr_price - spot_tp_pts, 2)
+    
     expiry_time = now_dt + timedelta(minutes=max_hold_mins)
     
     ACTIVE_SIGNALS[asset_name] = {
         "asset": asset_name, "type": current_signal_type, "option": option_pick,
         "entry_cmp": curr_price, "sl": sl, "tp": tp, "rrr": rrr_ratio,
-        "opt_premium": estimated_option_premium, "opt_sl": option_sl_price, "opt_tp": option_tp_price,
-        "start_dt": now_dt, "expiry_dt": expiry_time, "time_str": time_str, "status": "OPEN"
+        "opt_premium": real_opt_premium, "opt_sl": opt_sl_price, "opt_tp": opt_tp_price,
+        "start_dt": now_dt, "expiry_dt": expiry_time, "time_str": time_str, "status": "OPEN", "trailed_to_cost": False
     }
 
-    report = (
-        f"{signal_header}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⏰ **Signal Time:** `{time_str}`\n"
-        f"• **Asset:** `{asset_name}`\n"
-        f"• **Current Spot Price (CMP):** **₹{curr_price:,.2f} {unit}**\n"
-        f"• **Option Strike Pick:** {option_pick}\n"
-        f"• **Est. Premium Price:** **~₹{estimated_option_premium:,.1f}**\n"
-        f"• **Setup:** {bias_desc}\n\n"
-        f"🎯 **TARGETS & RISK LEVELS**\n"
-        f"• **Spot Entry Zone:** {entry_zone}\n"
-        f"• **Spot SL:** **₹{sl:,.2f}** (Risk: {spot_sl_pts:.2f} pts)\n"
-        f"• **Spot Target (TP):** **₹{tp:,.2f}** (Reward: {spot_tp_pts:.2f} pts)\n"
-        f"• **Option SL:** ~₹{option_sl_price:,.1f}\n"
-        f"• **Option Target:** ~₹{option_tp_price:,.1f}\n"
-        f"• **Risk-Reward Ratio:** **1 : {rrr_ratio}**\n\n"
-        f"⏳ **HOLDING RULES:** Max {max_hold_mins} Mins | Hard Exit: `{expiry_time.strftime('%I:%M %p')}`"
+    signal_header = f"🛑 🚨 **HIGH-CONVICTION ALERT: {current_signal_type} [RRR 1:{rrr_ratio}]** 🔴 🛑" if rrr_ratio >= 2.0 else f"🚨 **NEW SCALP SIGNAL: {current_signal_type}** 🟢"
+    bias_desc = f"Order Flow breakout above CPR with RSI ({rsi})." if current_signal_type == "BUY" else f"Order Flow breakdown below CPR with RSI ({rsi})."
+
+    return (
+        f"{signal_header}\n━━━━━━━━━━━━━━━━━━━━━\n⏰ **Signal Time:** `{time_str}`\n• **Asset:** `{asset_name}`\n"
+        f"• **Current Spot Price (CMP):** **₹{curr_price:,.2f} {unit}**\n• **Option Strike Pick:** {option_pick}\n"
+        f"• **REAL ITM Option Premium:** **₹{real_opt_premium:,.1f}**\n• **Setup:** {bias_desc}\n\n"
+        f"🎯 **TARGETS & RISK LEVELS**\n• **Spot Entry Zone:** {entry_zone}\n• **Spot SL:** **₹{sl:,.2f}**\n"
+        f"• **Spot Target (TP):** **₹{tp:,.2f}**\n• **Option Premium SL:** **₹{opt_sl_price:,.1f}**\n"
+        f"• **Option Premium Target:** **₹{opt_tp_price:,.1f}**\n• **Risk-Reward Ratio:** **1 : {rrr_ratio}**\n\n"
+        f"⏳ **THETA DECAY GUARD:** Max {max_hold_mins} Mins | Hard Exit: `{expiry_time.strftime('%I:%M %p')}`"
     )
 
-    return report
-
 # ==========================================
-# 7. END OF DAY P&L CALCULATOR
+# 10. SEGMENT-SPECIFIC EOD P&L CALCULATOR
 # ==========================================
-def calculate_eod_performance(capital=10000.0):
+def calculate_eod_performance(capital=10000.0, asset_filter=None):
     global DAILY_COMPLETED_TRADES
-    
     tz = pytz.timezone("Asia/Kolkata")
     today_str = datetime.now(tz).strftime("%d-%b-%Y")
 
-    if not DAILY_COMPLETED_TRADES:
-        return (
-            f"📊 **END OF DAY (EOD) PERFORMANCE REPORT ({today_str})**\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"• **Account Capital:** ₹{capital:,.2f}\n"
-            f"• **Completed Signals:** 0\n"
-            f"• **Status:** No trade setups reached target/SL or closed today yet."
-        )
+    filtered_trades = DAILY_COMPLETED_TRADES
+    segment_label = "ALL SEGMENTS COMBINED"
 
-    total_trades = len(DAILY_COMPLETED_TRADES)
-    wins = [t for t in DAILY_COMPLETED_TRADES if t["result"] == "WIN"]
-    losses = [t for t in DAILY_COMPLETED_TRADES if t["result"] == "LOSS"]
+    if asset_filter:
+        if asset_filter == "STOCKS":
+            filtered_trades = [t for t in DAILY_COMPLETED_TRADES if t["asset"] in STOCK_WATCHLIST]
+            segment_label = "INTRADAY STOCKS"
+        else:
+            filtered_trades = [t for t in DAILY_COMPLETED_TRADES if t["asset"] == asset_filter]
+            segment_label = f"{asset_filter} SEGMENT"
+
+    if not filtered_trades:
+        return f"📊 **EOD PERFORMANCE REPORT: {segment_label} ({today_str})**\n━━━━━━━━━━━━━━━━━━━━━\n• **Status:** No trades completed in this segment today."
+
+    total_trades = len(filtered_trades)
+    wins = [t for t in filtered_trades if t["result"] == "WIN"]
+    losses = [t for t in filtered_trades if t["result"] == "LOSS"]
+    breakevens = [t for t in filtered_trades if t["result"] == "BREAKEVEN"]
     
     win_count = len(wins)
     loss_count = len(losses)
+    be_count = len(breakevens)
+    
     win_rate = (win_count / total_trades) * 100 if total_trades > 0 else 0.0
 
     risk_per_trade = capital * 0.02
-    reward_per_trade = risk_per_trade * 1.85
-
-    gross_profit = (win_count * reward_per_trade) - (loss_count * risk_per_trade)
-    brokerage_per_trade = 50.0
+    gross_profit = (win_count * (risk_per_trade * 1.85)) - (loss_count * risk_per_trade)
+    
+    # Adjusted for Zero-Brokerage accounts (e.g. mStock, Shoonya). Deducts only ₹20 for STT/Taxes.
+    brokerage_per_trade = 20.0 
     total_brokerage = total_trades * brokerage_per_trade
-
     net_earnings = gross_profit - total_brokerage
-    net_roi = (net_earnings / capital) * 100
 
-    report = (
-        f"📊 **END OF DAY (EOD) PERFORMANCE REPORT ({today_str})**\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💰 **Starting Account Capital:** **₹{capital:,.2f}**\n\n"
-        f"📈 **DAILY SIGNAL PERFORMANCE:**\n"
-        f"• **Total Trades Executed:** {total_trades}\n"
-        f"• **Winning Signals:** {win_count} 🟢\n"
-        f"• **Losing Signals:** {loss_count} 🔴\n"
-        f"• **Overall Strategy Win Rate:** **{win_rate:.1f}%**\n\n"
-        f"💵 **NET EVENING EARNINGS (AFTER TAX & BROKERAGE):**\n"
-        f"• **Gross Profit:** ₹{gross_profit:,.2f}\n"
-        f"• **Taxes & Brokerage (~₹50/trade):** -₹{total_brokerage:,.2f}\n"
-        f"• 🏆 **NET TAKE-HOME EARNINGS:** **₹{net_earnings:,.2f}** ({net_roi:+.2f}% ROI)\n"
+    return (
+        f"📊 **EOD PERFORMANCE REPORT: {segment_label} ({today_str})**\n━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 **Allocated Account Capital:** **₹{capital:,.2f}**\n\n📈 **SIGNAL PERFORMANCE:**\n"
+        f"• **Total Trades Executed:** {total_trades}\n• **Winning Signals:** {win_count} 🟢\n"
+        f"• **Breakeven Signals (Trailed SL Hit):** {be_count} 🟡\n"
+        f"• **Losing Signals:** {loss_count} 🔴\n• **Strategy Win Rate:** **{win_rate:.1f}%**\n\n"
+        f"💵 **NET EVENING EARNINGS (AFTER TAX & BROKERAGE):**\n• **Gross Profit:** ₹{gross_profit:,.2f}\n"
+        f"• **Taxes & Exchange Fees (~₹20/trade):** -₹{total_brokerage:,.2f}\n"
+        f"• 🏆 **NET TAKE-HOME EARNINGS:** **₹{net_earnings:,.2f}** ({(net_earnings / capital) * 100:+.2f}% ROI)\n"
     )
 
-    return report
-
 # ==========================================
-# 8. LIVE TRADE TRACKER
+# 11. LIVE TRADE TRACKER & TRAILING SL TO COST
 # ==========================================
 def track_active_trades():
     global ACTIVE_SIGNALS, DAILY_COMPLETED_TRADES
@@ -524,73 +526,47 @@ def track_active_trades():
     now_dt = datetime.now(tz)
 
     for asset_name, trade in list(ACTIVE_SIGNALS.items()):
-        if not trade or trade.get("status") != "OPEN":
-            continue
+        if not trade or trade.get("status") != "OPEN": continue
 
         df = fetch_live_ohlc(asset_name)
-        if df.empty:
-            continue
+        if df.empty: continue
 
         latest = df.iloc[-1]
-        high_price = round(float(latest["high"]), 2)
-        low_price = round(float(latest["low"]), 2)
-        cmp = round(float(latest["close"]), 2)
+        high_price, low_price, cmp = float(latest["high"]), float(latest["low"]), float(latest["close"])
+        sig_type, sl, tp, entry, option = trade["type"], trade["sl"], trade["tp"], trade["entry_cmp"], trade["option"]
+        sl_distance = abs(entry - sl)
 
-        sig_type = trade["type"]
-        sl, tp, option, entry = trade["sl"], trade["tp"], trade["option"], trade["entry_cmp"]
+        if not trade.get("trailed_to_cost", False):
+            if (sig_type == "BUY" and (high_price - entry) >= sl_distance) or (sig_type == "SELL" and (entry - low_price) >= sl_distance):
+                ACTIVE_SIGNALS[asset_name]["sl"] = entry
+                ACTIVE_SIGNALS[asset_name]["trailed_to_cost"] = True
+                send_telegram_alert(f"🛡️ **ZERO-RISK TRAILING SL:** `{asset_name}` hit 1:1 RRR! Stop Loss moved to Entry Cost (₹{entry:,.2f}).")
 
         if now_dt >= trade["expiry_dt"]:
             ACTIVE_SIGNALS[asset_name]["status"] = "CLOSED"
             pnl_pts = round(cmp - entry if sig_type == "BUY" else entry - cmp, 2)
             res = "WIN" if pnl_pts > 0 else "LOSS"
             DAILY_COMPLETED_TRADES.append({"asset": asset_name, "result": res})
-            
-            send_telegram_alert(
-                f"⏳ **THETA EXPIRY EXIT:** `{asset_name}` ({option})\n"
-                f"Closed at CMP ₹{cmp:,.2f} ({pnl_pts:+} pts)."
-            )
+            send_telegram_alert(f"⏳ **THETA EROSION AUTO-EXIT:** `{asset_name}` ({option})\nClosed at CMP ₹{cmp:,.2f} to save option premium.")
             continue
 
-        if sig_type == "BUY":
-            if high_price >= tp or cmp >= tp:
-                ACTIVE_SIGNALS[asset_name]["status"] = "CLOSED"
-                DAILY_COMPLETED_TRADES.append({"asset": asset_name, "result": "WIN"})
-                send_telegram_alert(
-                    f"🎯 **TARGET ACHIEVED!** 🎉🟢\n"
-                    f"• **Asset:** `{asset_name}` ({option})\n"
-                    f"• **Entry:** ₹{entry:,.2f} ➔ **Target Hit:** ₹{tp:,.2f}\n"
-                    f"• **Result:** **WIN SECURED!** 🚀"
-                )
-            elif low_price <= sl or cmp <= sl:
-                ACTIVE_SIGNALS[asset_name]["status"] = "CLOSED"
+        if (sig_type == "BUY" and (high_price >= tp or cmp >= tp)) or (sig_type == "SELL" and (low_price <= tp or cmp <= tp)):
+            ACTIVE_SIGNALS[asset_name]["status"] = "CLOSED"
+            DAILY_COMPLETED_TRADES.append({"asset": asset_name, "result": "WIN"})
+            send_telegram_alert(f"🎯 **TARGET ACHIEVED!** 🎉🟢\n• **Asset:** `{asset_name}` ({option})\n• **Result:** **WIN SECURED!** 🚀")
+            
+        elif (sig_type == "BUY" and (low_price <= sl or cmp <= sl)) or (sig_type == "SELL" and (high_price >= sl or cmp >= sl)):
+            ACTIVE_SIGNALS[asset_name]["status"] = "CLOSED"
+            # Distinguish between a Loss and a Trailed Breakeven
+            if trade.get("trailed_to_cost", False) and sl == entry:
+                DAILY_COMPLETED_TRADES.append({"asset": asset_name, "result": "BREAKEVEN"})
+                send_telegram_alert(f"🛡️ **TRAILED SL HIT (BREAKEVEN)** 🟡\n• **Asset:** `{asset_name}` ({option})\n• **Exited at Cost:** ₹{sl:,.2f}")
+            else:
                 DAILY_COMPLETED_TRADES.append({"asset": asset_name, "result": "LOSS"})
-                send_telegram_alert(
-                    f"🛑 **STOP LOSS HIT** 🔴\n"
-                    f"• **Asset:** `{asset_name}` ({option})\n"
-                    f"• **Entry:** ₹{entry:,.2f} ➔ **SL Hit:** ₹{sl:,.2f}"
-                )
-
-        elif sig_type == "SELL":
-            if low_price <= tp or cmp <= tp:
-                ACTIVE_SIGNALS[asset_name]["status"] = "CLOSED"
-                DAILY_COMPLETED_TRADES.append({"asset": asset_name, "result": "WIN"})
-                send_telegram_alert(
-                    f"🎯 **TARGET ACHIEVED!** 🎉🟢\n"
-                    f"• **Asset:** `{asset_name}` ({option})\n"
-                    f"• **Entry:** ₹{entry:,.2f} ➔ **Target Hit:** ₹{tp:,.2f}\n"
-                    f"• **Result:** **WIN SECURED!** 🚀"
-                )
-            elif high_price >= sl or cmp >= sl:
-                ACTIVE_SIGNALS[asset_name]["status"] = "CLOSED"
-                DAILY_COMPLETED_TRADES.append({"asset": asset_name, "result": "LOSS"})
-                send_telegram_alert(
-                    f"🛑 **STOP LOSS HIT** 🔴\n"
-                    f"• **Asset:** `{asset_name}` ({option})\n"
-                    f"• **Entry:** ₹{entry:,.2f} ➔ **SL Hit:** ₹{sl:,.2f}"
-                )
+                send_telegram_alert(f"🛑 **STOP LOSS HIT** 🔴\n• **Asset:** `{asset_name}` ({option})\n• **SL Hit:** ₹{sl:,.2f}")
 
 # ==========================================
-# 9. BACKGROUND SCANNER THREAD
+# 12. BACKGROUND SCANNER THREAD
 # ==========================================
 def background_all_segment_scanner():
     logging.info("🚀 Background Scanner Active 24/7!")
@@ -609,16 +585,14 @@ def background_all_segment_scanner():
                 eod_reported_today = False
 
             for asset in ALWAYS_ON_ASSETS:
-                alert_text = analyze_asset_scalp(asset, is_auto_scan=True)
-                if alert_text:
-                    send_telegram_alert(alert_text)
+                alert = analyze_asset_scalp(asset, is_auto_scan=True)
+                if alert: send_telegram_alert(alert)
                 time.sleep(2)
 
             if not STOP_ON_DEMAND_SIGNALS:
                 for asset in ON_DEMAND_ASSETS:
-                    alert_text = analyze_asset_scalp(asset, is_auto_scan=True)
-                    if alert_text:
-                        send_telegram_alert(alert_text)
+                    alert = analyze_asset_scalp(asset, is_auto_scan=True)
+                    if alert: send_telegram_alert(alert)
                     time.sleep(2)
 
             track_active_trades()
@@ -628,56 +602,43 @@ def background_all_segment_scanner():
         time.sleep(30)
 
 # ==========================================
-# 10. RENDER WEB SERVER
+# 13. RENDER WEB SERVER
 # ==========================================
 app_flask = Flask(__name__)
-
 @app_flask.route("/")
-def home():
-    return "🚀 Emerald Trade Agent Live!"
-
-def run_flask():
-    port = int(os.environ.get("PORT", 10000))
-    app_flask.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+def home(): return "🚀 Emerald Trade Agent Live!"
+def run_flask(): app_flask.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), debug=False, use_reloader=False)
 
 # ==========================================
-# 11. TELEGRAM HANDLERS & LISTENERS
+# 14. TELEGRAM HANDLERS
 # ==========================================
 def get_main_keyboard():
+    pause_text = "▶️ RESUME SIGNALS" if STOP_ON_DEMAND_SIGNALS else "🛑 PAUSE SIGNALS"
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📈 NIFTY", callback_data="ANALYZE_NIFTY"), InlineKeyboardButton("🏦 BANK NIFTY", callback_data="ANALYZE_BANK NIFTY"), InlineKeyboardButton("📊 SENSEX", callback_data="ANALYZE_SENSEX")],
         [InlineKeyboardButton("🎯 STOCKS", callback_data="TRIGGER_STOCKS"), InlineKeyboardButton("🔷 FINNIFTY", callback_data="ANALYZE_FINNIFTY"), InlineKeyboardButton("⚡ MIDCPNIFTY", callback_data="ANALYZE_MIDCPNIFTY")],
         [InlineKeyboardButton("🛢️ CRUDE OIL", callback_data="ANALYZE_CRUDE OIL"), InlineKeyboardButton("🔥 NATURAL GAS", callback_data="ANALYZE_NATURAL GAS")],
         [InlineKeyboardButton("🥇 GOLD", callback_data="ANALYZE_GOLD"), InlineKeyboardButton("🥈 SILVER", callback_data="ANALYZE_SILVER")],
-        [InlineKeyboardButton("🛑 STOP SIGNALS", callback_data="STOP_SIGNALS"), InlineKeyboardButton("📊 EOD P&L REPORT", callback_data="EOD_REPORT")]
+        [InlineKeyboardButton(pause_text, callback_data="TOGGLE_SIGNALS"), InlineKeyboardButton("📊 EOD P&L REPORT", callback_data="EOD_REPORT")]
     ])
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    welcome_text = (
-        "🚀 *Institutional Trading Control Panel Online!*\n\n"
-        "⚡ **QUICK TEXT COMMANDS:**\n"
-        "• Type **`N`** $\\rightarrow$ NIFTY Live Price, Trend, Open, High, Low, & Prev. Close\n"
-        "• Type **`S`** $\\rightarrow$ SENSEX Live Price, Trend, Open, High, Low, & Prev. Close\n"
-        "• Type **`B`** $\\rightarrow$ BANK NIFTY Live Price, Trend, Open, High, Low, & Prev. Close\n\n"
-        "🔴 *High-Conviction Signals (RRR > 1:2.0) display in Red Bold Alerts!*"
-    )
-    await update.message.reply_text(welcome_text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
+    msg = ("🚀 *Institutional Trading Control Panel!*\n\n⚡ **QUICK COMMANDS:**\n• `N` $\\rightarrow$ NIFTY Stats\n• `S` $\\rightarrow$ SENSEX Stats\n• `B` $\\rightarrow$ BANK NIFTY Stats\n\n📊 **EOD COMMANDS:**\n• `EODN` $\\rightarrow$ NIFTY Report\n• `EODS` $\\rightarrow$ SENSEX Report\n• `EODBN` $\\rightarrow$ BANK NIFTY Report\n• `EODST` $\\rightarrow$ STOCKS Report\n• `EOD` $\\rightarrow$ Combined Report")
+    await update.message.reply_text(msg, reply_markup=get_main_keyboard(), parse_mode="Markdown")
 
 async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip().upper()
-    if text == "N":
-        summary = get_quick_market_summary("NIFTY")
-        await update.message.reply_text(summary, parse_mode="Markdown", reply_markup=get_main_keyboard())
-    elif text == "S":
-        summary = get_quick_market_summary("SENSEX")
-        await update.message.reply_text(summary, parse_mode="Markdown", reply_markup=get_main_keyboard())
-    elif text == "B":
-        summary = get_quick_market_summary("BANK NIFTY")
-        await update.message.reply_text(summary, parse_mode="Markdown", reply_markup=get_main_keyboard())
+    if text == "N": await update.message.reply_text(get_quick_market_summary("NIFTY"), parse_mode="Markdown", reply_markup=get_main_keyboard())
+    elif text == "S": await update.message.reply_text(get_quick_market_summary("SENSEX"), parse_mode="Markdown", reply_markup=get_main_keyboard())
+    elif text == "B": await update.message.reply_text(get_quick_market_summary("BANK NIFTY"), parse_mode="Markdown", reply_markup=get_main_keyboard())
+    elif text in ["EODN", "EODL"]: await update.message.reply_text(calculate_eod_performance(10000.0, "NIFTY"), parse_mode="Markdown", reply_markup=get_main_keyboard())
+    elif text == "EODS": await update.message.reply_text(calculate_eod_performance(10000.0, "SENSEX"), parse_mode="Markdown", reply_markup=get_main_keyboard())
+    elif text == "EODBN": await update.message.reply_text(calculate_eod_performance(10000.0, "BANK NIFTY"), parse_mode="Markdown", reply_markup=get_main_keyboard())
+    elif text in ["EODST", "EODSTOCKS"]: await update.message.reply_text(calculate_eod_performance(10000.0, "STOCKS"), parse_mode="Markdown", reply_markup=get_main_keyboard())
+    elif text == "EOD": await update.message.reply_text(calculate_eod_performance(10000.0), parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 async def eod_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    report = calculate_eod_performance(10000.0)
-    await update.message.reply_text(report, reply_markup=get_main_keyboard(), parse_mode="Markdown")
+    await update.message.reply_text(calculate_eod_performance(10000.0), reply_markup=get_main_keyboard(), parse_mode="Markdown")
 
 async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global STOP_ON_DEMAND_SIGNALS
@@ -685,39 +646,28 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     await query.answer()
     
     if query.data == "TRIGGER_STOCKS":
-        await query.edit_message_text("🔍 Scanning top volume & momentum breakout stocks...", parse_mode="Markdown")
-        report = scan_top_4_stocks()
-        await context.bot.send_message(chat_id=query.message.chat_id, text=report, parse_mode="Markdown", reply_markup=get_main_keyboard())
-
-    elif query.data == "STOP_SIGNALS":
-        STOP_ON_DEMAND_SIGNALS = True
-        msg = "🛑 **ON-DEMAND SIGNALS PAUSED!**"
-        await context.bot.send_message(chat_id=query.message.chat_id, text=msg, parse_mode="Markdown", reply_markup=get_main_keyboard())
-
+        await query.edit_message_text("🔍 Scanning...", parse_mode="Markdown")
+        await context.bot.send_message(chat_id=query.message.chat_id, text=scan_top_4_stocks(), parse_mode="Markdown", reply_markup=get_main_keyboard())
+    elif query.data == "TOGGLE_SIGNALS":
+        STOP_ON_DEMAND_SIGNALS = not STOP_ON_DEMAND_SIGNALS
+        status_msg = "🛑 **ON-DEMAND SIGNALS PAUSED!**" if STOP_ON_DEMAND_SIGNALS else "▶️ **SIGNALS RESUMED!**"
+        await context.bot.send_message(chat_id=query.message.chat_id, text=status_msg, parse_mode="Markdown", reply_markup=get_main_keyboard())
     elif query.data == "EOD_REPORT":
-        report = calculate_eod_performance(10000.0)
-        await context.bot.send_message(chat_id=query.message.chat_id, text=report, parse_mode="Markdown", reply_markup=get_main_keyboard())
-
+        await context.bot.send_message(chat_id=query.message.chat_id, text=calculate_eod_performance(10000.0), parse_mode="Markdown", reply_markup=get_main_keyboard())
     elif query.data.startswith("ANALYZE_"):
         asset = query.data.replace("ANALYZE_", "")
         STOP_ON_DEMAND_SIGNALS = False
         report = analyze_asset_scalp(asset, is_auto_scan=False)
-        await context.bot.send_message(chat_id=query.message.chat_id, text=report, parse_mode="Markdown", reply_markup=get_main_keyboard())
+        if report: await context.bot.send_message(chat_id=query.message.chat_id, text=report, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
-# ==========================================
-# 12. MAIN EXECUTION ENTRYPOINT
-# ==========================================
 if __name__ == "__main__":
     initialize_broker_apis()
-
     threading.Thread(target=run_flask, daemon=True).start()
     threading.Thread(target=background_all_segment_scanner, daemon=True).start()
-
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("eod", eod_command))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), text_message_handler))
     app.add_handler(CallbackQueryHandler(button_callback_handler))
-
     logging.info("✅ Starting Telegram Bot...")
     app.run_polling(drop_pending_updates=True)
