@@ -53,7 +53,9 @@ ASSET_CONFIG = {
 }
 
 fyers = None
-LAST_SIGNAL_STATE = {asset: None for asset in ASSET_CONFIG}
+
+# Active Signal & Trade Tracker Engine
+ACTIVE_SIGNALS = {asset: None for asset in ASSET_CONFIG}
 
 def initialize_fyers():
     global fyers
@@ -69,7 +71,7 @@ def initialize_fyers():
             logging.error(f"❌ Fyers Init Failed: {e}")
 
 # ==========================================
-# 2. FYERS DATA HEALTH CHECK ENGINE
+# 2. FYERS DATA HEALTH CHECK
 # ==========================================
 def check_fyers_data_health():
     token = os.environ.get("FYERS_ACCESS_TOKEN", "")
@@ -196,10 +198,10 @@ def calculate_technical_indicators(df):
     return df
 
 # ==========================================
-# 5. ANALYSIS ENGINE
+# 5. ANALYSIS & SIGNAL GENERATOR
 # ==========================================
 def analyze_asset_scalp(asset_name, is_auto_scan=False):
-    global LAST_SIGNAL_STATE
+    global ACTIVE_SIGNALS
 
     df = fetch_live_ohlc(asset_name)
     if df.empty or len(df) < 15:
@@ -210,6 +212,9 @@ def analyze_asset_scalp(asset_name, is_auto_scan=False):
     df = calculate_technical_indicators(df)
     latest = df.iloc[-1]
     
+    tz = pytz.timezone("Asia/Kolkata")
+    time_str = datetime.now(tz).strftime("%I:%M:%S %p | %d-%b-%Y")
+
     curr_price = round(float(latest["close"]), 2)
     ema_5 = round(float(latest["ema_5"]), 2)
     ema_9 = round(float(latest["ema_9"]), 2)
@@ -224,93 +229,206 @@ def analyze_asset_scalp(asset_name, is_auto_scan=False):
     sl_dist = max(round(atr * 1.2, 2), step * 0.4)
     tp_dist = round(sl_dist * 1.9, 2)
 
-    current_signal = "NEUTRAL"
+    current_signal_type = None
 
     if curr_price > vwap and ema_5 > ema_9:
-        current_signal = "BUY"
-        ce_strike = int(atm_strike - step if asset_name in ["NIFTY", "BANK NIFTY", "SENSEX"] else atm_strike)
-        option_pick = f"`{ce_strike} CALL (CE)`"
+        current_signal_type = "BUY"
+        strike_val = int(atm_strike - step if asset_name in ["NIFTY", "BANK NIFTY", "SENSEX"] else atm_strike)
+        option_pick = f"`{strike_val} CALL (CE)`"
         entry_zone = f"₹{curr_price - (step*0.05):,.2f} - ₹{curr_price + (step*0.05):,.2f}"
         sl = round(curr_price - sl_dist, 2)
         tp = round(curr_price + tp_dist, 2)
-        signal_header = "🚨 **NEW INSTITUTIONAL SIGNAL: BUY** 🟢"
+        signal_header = "🚨 **NEW SCALP SIGNAL: BUY (CE)** 🟢"
         bias_desc = f"Bullish breakout above VWAP with 5/9 EMA crossover."
     elif curr_price < vwap and ema_5 < ema_9:
-        current_signal = "SELL"
-        pe_strike = int(atm_strike + step if asset_name in ["NIFTY", "BANK NIFTY", "SENSEX"] else atm_strike)
-        option_pick = f"`{pe_strike} PUT (PE)`"
+        current_signal_type = "SELL"
+        strike_val = int(atm_strike + step if asset_name in ["NIFTY", "BANK NIFTY", "SENSEX"] else atm_strike)
+        option_pick = f"`{strike_val} PUT (PE)`"
         entry_zone = f"₹{curr_price - (step*0.05):,.2f} - ₹{curr_price + (step*0.05):,.2f}"
         sl = round(curr_price + sl_dist, 2)
         tp = round(curr_price - tp_dist, 2)
-        signal_header = "🚨 **NEW INSTITUTIONAL SIGNAL: SELL** 🔴"
+        signal_header = "🚨 **NEW SCALP SIGNAL: SELL (PE)** 🔴"
         bias_desc = f"Bearish breakdown below VWAP with 5/9 EMA crossover."
     else:
         if is_auto_scan:
-            LAST_SIGNAL_STATE[asset_name] = "NEUTRAL"
             return None
         return (
             f"⚡ **LIVE MARKET ANALYSIS: {asset_name}**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"• Current Spot Price: **₹{curr_price:,.2f} {unit}**\n"
-            f"• Live VWAP: **₹{vwap:,.2f}** | 5 EMA: **₹{ema_5:,.2f}**\n"
-            f"• Market Status: **NO TRADE ZONE (Consolidation)**\n\n"
+            f"• **Current Market Price (CMP):** ₹{curr_price:,.2f} {unit}\n"
+            f"• **Live VWAP:** ₹{vwap:,.2f} | **5 EMA:** ₹{ema_5:,.2f}\n"
+            f"• **Market Status:** **NO TRADE ZONE (Consolidation)**\n\n"
             f"💡 *Spot price is trapped near VWAP. Awaiting breakout.*"
         )
 
+    # If Auto Scan, check if it's a fresh signal or if existing trade active
     if is_auto_scan:
-        if LAST_SIGNAL_STATE[asset_name] == current_signal:
-            return None
-        LAST_SIGNAL_STATE[asset_name] = current_signal
+        active = ACTIVE_SIGNALS[asset_name]
+        if active and active.get("status") == "OPEN":
+            return None  # Trade currently active, tracking engine handles SL/TP
+
+        if active and active.get("type") == current_signal_type and active.get("status") == "CLOSED":
+            return None  # Signal already traded and closed
+
+    # Register New Active Signal
+    ACTIVE_SIGNALS[asset_name] = {
+        "asset": asset_name,
+        "type": current_signal_type,
+        "option": option_pick,
+        "entry_cmp": curr_price,
+        "sl": sl,
+        "tp": tp,
+        "time": time_str,
+        "status": "OPEN"
+    }
 
     report = (
         f"{signal_header}\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"• **Asset:** `{asset_name}`\n"
-        f"• **Option Strike:** {option_pick}\n"
-        f"• **Live INR Price:** ₹{curr_price:,.2f} {unit}\n"
-        f"• **Order Flow Bias:** {bias_desc}\n\n"
+        f"⏰ **Signal Generated Time:** `{time_str}`\n"
+        f"• **Asset Segment:** `{asset_name}`\n"
+        f"• **Current Market Price (CMP):** **₹{curr_price:,.2f} {unit}**\n"
+        f"• **Recommended Strike:** {option_pick}\n"
+        f"• **Order Flow Setup:** {bias_desc}\n\n"
         f"🎯 **TARGETS & RISK MANAGEMENT (1:1.9 RRR)**\n"
         f"• **Entry Zone:** {entry_zone}\n"
-        f"• **Stop Loss (SL):** ₹{sl:,.2f} (Risk: {sl_dist} pts)\n"
-        f"• **Take Profit (TP):** ₹{tp:,.2f} (Reward: {tp_dist} pts)\n"
+        f"• **Stop Loss (SL):** **₹{sl:,.2f}** (Risk: {sl_dist:.2f} pts)\n"
+        f"• **Target Profit (TP):** **₹{tp:,.2f}** (Reward: {tp_dist:.2f} pts)\n"
         f"• **Risk-Reward Ratio:** **1 : 1.9**\n\n"
-        f"📋 **Indicators:** VWAP = ₹{vwap} | 5 EMA = ₹{ema_5} | 9 EMA = ₹{ema_9}"
+        f"📋 **Live Indicators:** VWAP = ₹{vwap} | 5 EMA = ₹{ema_5} | 9 EMA = ₹{ema_9}"
     )
 
     return report
 
 # ==========================================
-# 6. BACKGROUND AUTO SCANNER
+# 6. LIVE TRADE TRACKER ENGINE (SL / TP ALERTS)
+# ==========================================
+def track_active_trades_for_sl_tp():
+    """Continuously monitors open signals and sends SL Hit or Target Achieved alerts"""
+    global ACTIVE_SIGNALS
+    tz = pytz.timezone("Asia/Kolkata")
+
+    for asset_name, trade in list(ACTIVE_SIGNALS.items()):
+        if not trade or trade.get("status") != "OPEN":
+            continue
+
+        df = fetch_live_ohlc(asset_name)
+        if df.empty:
+            continue
+
+        latest = df.iloc[-1]
+        high_price = round(float(latest["high"]), 2)
+        low_price = round(float(latest["low"]), 2)
+        cmp = round(float(latest["close"]), 2)
+
+        time_str = datetime.now(tz).strftime("%I:%M:%S %p")
+        sig_type = trade["type"]
+        sl = trade["sl"]
+        tp = trade["tp"]
+        option = trade["option"]
+        entry = trade["entry_cmp"]
+
+        # Check BUY (CE) Outcome
+        if sig_type == "BUY":
+            if high_price >= tp or cmp >= tp:
+                ACTIVE_SIGNALS[asset_name]["status"] = "CLOSED"
+                msg = (
+                    f"🎯 **TARGET ACHIEVED ALERT!** 🎉🟢\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"• **Asset:** `{asset_name}` ({option})\n"
+                    f"• **Signal Time:** `{trade['time']}`\n"
+                    f"• **Exit Time:** `{time_str}`\n"
+                    f"• **Entry CMP:** ₹{entry:,.2f}\n"
+                    f"• **Target Price:** ₹{tp:,.2f}\n"
+                    f"• **Current Market Price:** ₹{cmp:,.2f}\n"
+                    f"• **Result:** **TARGET HIT (1:1.9 Profit Booked!)** 🚀"
+                )
+                send_telegram_alert(msg)
+
+            elif low_price <= sl or cmp <= sl:
+                ACTIVE_SIGNALS[asset_name]["status"] = "CLOSED"
+                msg = (
+                    f"🛑 **STOP LOSS HIT ALERT** 🔴\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"• **Asset:** `{asset_name}` ({option})\n"
+                    f"• **Signal Time:** `{trade['time']}`\n"
+                    f"• **Exit Time:** `{time_str}`\n"
+                    f"• **Entry CMP:** ₹{entry:,.2f}\n"
+                    f"• **SL Price:** ₹{sl:,.2f}\n"
+                    f"• **Current Market Price:** ₹{cmp:,.2f}\n"
+                    f"• **Result:** **SL HIT (Trade Closed as per Risk Rules)**"
+                )
+                send_telegram_alert(msg)
+
+        # Check SELL (PE) Outcome
+        elif sig_type == "SELL":
+            if low_price <= tp or cmp <= tp:
+                ACTIVE_SIGNALS[asset_name]["status"] = "CLOSED"
+                msg = (
+                    f"🎯 **TARGET ACHIEVED ALERT!** 🎉🟢\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"• **Asset:** `{asset_name}` ({option})\n"
+                    f"• **Signal Time:** `{trade['time']}`\n"
+                    f"• **Exit Time:** `{time_str}`\n"
+                    f"• **Entry CMP:** ₹{entry:,.2f}\n"
+                    f"• **Target Price:** ₹{tp:,.2f}\n"
+                    f"• **Current Market Price:** ₹{cmp:,.2f}\n"
+                    f"• **Result:** **TARGET HIT (1:1.9 Profit Booked!)** 🚀"
+                )
+                send_telegram_alert(msg)
+
+            elif high_price >= sl or cmp >= sl:
+                ACTIVE_SIGNALS[asset_name]["status"] = "CLOSED"
+                msg = (
+                    f"🛑 **STOP LOSS HIT ALERT** 🔴\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"• **Asset:** `{asset_name}` ({option})\n"
+                    f"• **Signal Time:** `{trade['time']}`\n"
+                    f"• **Exit Time:** `{time_str}`\n"
+                    f"• **Entry CMP:** ₹{entry:,.2f}\n"
+                    f"• **SL Price:** ₹{sl:,.2f}\n"
+                    f"• **Current Market Price:** ₹{cmp:,.2f}\n"
+                    f"• **Result:** **SL HIT (Trade Closed as per Risk Rules)**"
+                )
+                send_telegram_alert(msg)
+
+# ==========================================
+# 7. BACKGROUND AUTO SCANNER
 # ==========================================
 def background_all_segment_scanner():
     logging.info("🚀 Background Auto-Scanner Engine Active 24/7!")
     time.sleep(10)
     while True:
         try:
+            # 1. Scan for new trade signals across all segments
             for asset in ASSET_CONFIG:
                 alert_text = analyze_asset_scalp(asset, is_auto_scan=True)
                 if alert_text:
                     send_telegram_alert(alert_text)
                 time.sleep(2)
+
+            # 2. Track open active signals for SL or Target Hit
+            track_active_trades_for_sl_tp()
+
         except Exception as e:
             logging.error(f"⚠️ Scanner Error: {e}")
-        time.sleep(60)
+        time.sleep(30)  # Scan every 30 seconds
 
 # ==========================================
-# 7. RENDER WEB SERVER
+# 8. RENDER WEB SERVER
 # ==========================================
 app_flask = Flask(__name__)
 
 @app_flask.route("/")
 def home():
-    return "🚀 Emerald Trade Agent Live with Fyers & INR Commodity Engine!"
+    return "🚀 Emerald Trade Agent Live with Signal Timestamp & Target/SL Engine!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app_flask.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 # ==========================================
-# 8. TELEGRAM HANDLERS
+# 9. TELEGRAM HANDLERS
 # ==========================================
 def get_main_keyboard():
     return InlineKeyboardMarkup([
@@ -324,9 +442,9 @@ def get_main_keyboard():
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
         "🚀 *Institutional Trading Engine Online!*\n\n"
-        "⚡ Continuous auto-scanning active for **NIFTY, BANK NIFTY, SENSEX, CRUDE OIL, NATURAL GAS, GOLD, & SILVER**.\n"
-        "💰 *All Commodity Prices are calculated and displayed in INR (₹).*\n\n"
-        "Tap any button below for live signals or to verify Fyers connection status:"
+        "⚡ Continuous scanning active for **NIFTY, BANK NIFTY, SENSEX, CRUDE OIL, NATURAL GAS, GOLD, & SILVER**.\n"
+        "⏰ *Includes Timestamp, CMP, Strike CE/PE, SL, 1:1.9 Target, & Auto SL/TP Hit Alerts!*\n\n"
+        "Tap any button below for instant signal analysis:"
     )
     await update.message.reply_text(welcome_text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
 
@@ -347,7 +465,7 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         await context.bot.send_message(chat_id=query.message.chat_id, text=report, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 # ==========================================
-# 9. MAIN EXECUTION
+# 10. MAIN EXECUTION
 # ==========================================
 if __name__ == "__main__":
     initialize_fyers()
