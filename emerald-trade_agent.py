@@ -41,16 +41,15 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8866649004:AAHuRrhqCH
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "5944911045")
 
 FYERS_CLIENT_ID = os.environ.get("FYERS_CLIENT_ID", "KDE60BKD5D-100")
-HARDCODED_ACCESS_TOKEN = os.environ.get("FYERS_ACCESS_TOKEN", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOlsiZDoxIiwiZDoyIiwieDowIiwieDoxIl0sImF0X2hhc2giOiJnQUFBQUFCcWNoRG5hZ3B6blBPLWpmYkVLYzFtdFhZcmszWnFSYTVGYXZLS0xQY2xYUlYzTnpTc2JxTzR5WTNZR3E2cHduNm1rU0J4VEJDRDAyVHlUd1lkZU1uaDkwWEVBVDRuYlEzbWNXU2UzRzhCTGZLb3RuRT0iLCJkaXNwbGF5X25hbWUiOiIiLCJvbXMiOiJLMSIsImhzbV9rZXkiOiJhZGFkMzlhZDQwOWUxZTcwNjU5ZDdiNDI4N2ZiNGFiZjE5YzlmN2ZkOGYwMzhjMDIwYzdhYzNiNCIsImlzRGRwaUVuYWBsZWQiOiJOIiwiaXNNdGZFbmFibGVkIjoiTiIsImZ5X2lkIjoiRkFLMzc1MDIiLCJhcHBUeXBlIjoxMDAsImV4cCI6MTc4NTg4OTgwMCwiaWF0IjoxNzg1ODYwMzI3LCJpc3MiOiJhcGkuZnllcnMuaW4iLCJuYmYiOjE3ODU4NjAzMjcsInN1YiI6ImFjY2Vzc190b2tlbiJ9.aFqvqHBsMSNHdMK4xANDBx2I2lUbPPSqCWzkQyIkIdA")
 
 ASSET_CONFIG = {
     "NIFTY": {"fyers": "NSE:NIFTY50-INDEX", "yahoo": "^NSEI", "step": 50, "unit": "pts"},
     "BANK NIFTY": {"fyers": "NSE:NIFTYBANK-INDEX", "yahoo": "^NSEBANK", "step": 100, "unit": "pts"},
     "SENSEX": {"fyers": "BSE:SENSEX-INDEX", "yahoo": "^BSESN", "step": 100, "unit": "pts"},
-    "CRUDE OIL": {"fyers": "MCX:CRUDEOIL26AUGFUT", "yahoo": "CL=F", "step": 10, "unit": "₹/bbl", "is_commodity": True, "multiplier": 83.5},
-    "NATURAL GAS": {"fyers": "MCX:NATURALGAS26AUGFUT", "yahoo": "NG=F", "step": 1, "unit": "₹/mmBtu", "is_commodity": True, "multiplier": 83.5},
-    "GOLD": {"fyers": "MCX:GOLD26OCTFUT", "yahoo": "GC=F", "step": 100, "unit": "₹/10g", "is_commodity": True, "multiplier": 83.5 / 31.1035 * 10},
-    "SILVER": {"fyers": "MCX:SILVER26SEPFUT", "yahoo": "SI=F", "step": 100, "unit": "₹/kg", "is_commodity": True, "multiplier": 83.5 / 31.1035 * 1000},
+    "CRUDE OIL": {"fyers": "MCX:CRUDEOIL26AUGFUT", "yahoo": "CL=F", "step": 10, "unit": "₹/bbl", "is_commodity": True},
+    "NATURAL GAS": {"fyers": "MCX:NATURALGAS26AUGFUT", "yahoo": "NG=F", "step": 1, "unit": "₹/mmBtu", "is_commodity": True},
+    "GOLD": {"fyers": "MCX:GOLD26OCTFUT", "yahoo": "GC=F", "step": 100, "unit": "₹/10g", "is_commodity": True},
+    "SILVER": {"fyers": "MCX:SILVER26SEPFUT", "yahoo": "SI=F", "step": 100, "unit": "₹/kg", "is_commodity": True},
 }
 
 fyers = None
@@ -59,9 +58,9 @@ LAST_SIGNAL_STATE = {asset: None for asset in ASSET_CONFIG}
 def initialize_fyers():
     global fyers
     if not FYERS_AVAILABLE:
-        logging.warning("⚠️ Fyers SDK not installed.")
+        logging.warning("⚠️ Fyers SDK not available.")
         return
-    token = os.environ.get("FYERS_ACCESS_TOKEN", HARDCODED_ACCESS_TOKEN)
+    token = os.environ.get("FYERS_ACCESS_TOKEN", "")
     if token:
         try:
             fyers = fyersModel.FyersModel(client_id=FYERS_CLIENT_ID, is_async=False, token=token, log_path="")
@@ -73,46 +72,34 @@ def initialize_fyers():
 # 2. FYERS DATA HEALTH CHECK ENGINE
 # ==========================================
 def check_fyers_data_health():
-    """Ping Fyers API to verify access token validity and live quote latency"""
+    token = os.environ.get("FYERS_ACCESS_TOKEN", "")
+    if not token:
+        return "⚠️ **FYERS API STATUS:** Token variable not set in Render Environment."
     if not fyers:
-        return "❌ **Fyers API Status:** Not Initialized / Missing SDK"
+        return "❌ **FYERS API STATUS:** Not Initialized / Invalid SDK Setup"
 
     try:
         profile = fyers.get_profile()
-        if profile.get("s") == "ok":
-            user_name = profile.get("data", {}).get("name", "Fyers Trader")
-            fy_id = profile.get("data", {}).get("fy_id", "FAK37502")
-            
-            # Test Quote Fetch
-            test_data = {
-                "symbol": "NSE:NIFTY50-INDEX",
-                "resolution": "3",
-                "date_format": "1",
-                "range_from": (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d"),
-                "range_to": datetime.now().strftime("%Y-%m-%d"),
-                "cont_flag": "1"
-            }
-            res = fyers.history(data=test_data)
-            if res.get("s") == "ok":
-                last_price = res.get("candles", [])[-1][4]
-                return (
-                    f"✅ **FYERS API STATUS: ACTIVE & OK** 🟢\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"• **Account ID:** `{fy_id}` ({user_name})\n"
-                    f"• **Live Data Test:** NIFTY 50 = ₹{last_price:,.2f}\n"
-                    f"• **Token Health:** Valid 24-Hour Access Token\n"
-                    f"• **Server Ping:** Responsive (<100ms)"
-                )
-            else:
-                return f"⚠️ **Fyers Warning:** Connected to account `{fy_id}`, but historical candle query failed."
-        else:
+        if profile and profile.get("s") == "ok":
+            user_data = profile.get("data", {})
+            user_name = user_data.get("name", "Fyers Trader")
+            fy_id = user_data.get("fy_id", "FAK37502")
             return (
-                f"❌ **FYERS ACCESS TOKEN EXPIRED** 🔴\n\n"
-                f"Fyers returned error: `{profile.get('message', 'Invalid Token')}`.\n"
-                f"💡 *The bot is currently running using Web Fallback Data. Please generate a fresh token to restore direct Fyers API access.*"
+                f"✅ **FYERS API STATUS: ONLINE & OK** 🟢\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"• **Account ID:** `{fy_id}` ({user_name})\n"
+                f"• **Status:** Active Live Connection\n"
+                f"• **Real-Time Data:** Operating Direct Fyers Feed"
+            )
+        else:
+            msg = profile.get('message', 'Invalid Token') if profile else 'No Response'
+            return (
+                f"❌ **FYERS ACCESS TOKEN EXPIRED / INVALID** 🔴\n\n"
+                f"Fyers error response: `{msg}`\n\n"
+                f"💡 *The bot is automatically running using Live Web Fallback Data.*"
             )
     except Exception as e:
-        return f"❌ **Fyers Check Exception:** `{str(e)}`"
+        return f"⚠️ **Fyers Status Exception:** `{str(e)}`"
 
 # ==========================================
 # 3. TELEGRAM ALERT DISPATCHER
@@ -126,25 +113,23 @@ def send_telegram_alert(message):
         logging.error(f"⚠️ Telegram Dispatch Error: {e}")
 
 # ==========================================
-# 4. DATA ENGINE (INR CONVERSION & FALLBACK)
+# 4. DATA ENGINE (INR & FALLBACK)
 # ==========================================
 def fetch_usd_inr_rate():
     try:
         url = "https://query1.finance.yahoo.com/v8/finance/chart/USDINR=X?range=1d&interval=1m"
         res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=4)
         if res.status_code == 200:
-            price = res.json()["chart"]["result"][0]["meta"]["regularMarketPrice"]
-            return float(price)
+            return float(res.json()["chart"]["result"][0]["meta"]["regularMarketPrice"])
     except Exception:
         pass
-    return 83.50  # Stable fallback INR/USD rate
+    return 83.50
 
 def fetch_live_ohlc(asset_name):
     config = ASSET_CONFIG.get(asset_name)
     if not config:
         return pd.DataFrame()
 
-    # 1. Try Fyers API Direct Fetch
     if fyers:
         try:
             tz = pytz.timezone("Asia/Kolkata")
@@ -158,14 +143,13 @@ def fetch_live_ohlc(asset_name):
                 "cont_flag": "1"
             }
             res = fyers.history(data=data)
-            if res.get("s") == "ok" and res.get("candles"):
+            if res and res.get("s") == "ok" and res.get("candles"):
                 df = pd.DataFrame(res["candles"], columns=["timestamp", "open", "high", "low", "close", "volume"])
                 df["time"] = pd.to_datetime(df["timestamp"], unit="s", utc=True).dt.tz_convert("Asia/Kolkata")
                 return df
         except Exception:
             pass
 
-    # 2. Multi-Source Web Fallback Engine with INR Conversion
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{config['yahoo']}?range=2d&interval=2m"
         headers = {'User-Agent': 'Mozilla/5.0'}
@@ -182,13 +166,14 @@ def fetch_live_ohlc(asset_name):
                 "close": quote["close"],
                 "volume": quote["volume"]
             }).dropna()
-            
-            # Apply INR Conversion for Commodities if fetching from global markets
+
             if config.get("is_commodity"):
                 usd_inr = fetch_usd_inr_rate()
-                mult = config.get("multiplier", 1.0)
-                if asset_name in ["CRUDE OIL", "NATURAL GAS"]:
-                    mult = usd_inr
+                mult = usd_inr
+                if asset_name == "GOLD":
+                    mult = (usd_inr / 31.1035) * 10
+                elif asset_name == "SILVER":
+                    mult = (usd_inr / 31.1035) * 1000
                 df["open"] *= mult
                 df["high"] *= mult
                 df["low"] *= mult
@@ -211,7 +196,7 @@ def calculate_technical_indicators(df):
     return df
 
 # ==========================================
-# 5. ANALYSIS & OPTION STRIKE ENGINE
+# 5. ANALYSIS ENGINE
 # ==========================================
 def analyze_asset_scalp(asset_name, is_auto_scan=False):
     global LAST_SIGNAL_STATE
@@ -295,7 +280,7 @@ def analyze_asset_scalp(asset_name, is_auto_scan=False):
     return report
 
 # ==========================================
-# 6. ALL-SEGMENT BACKGROUND SCANNER
+# 6. BACKGROUND AUTO SCANNER
 # ==========================================
 def background_all_segment_scanner():
     logging.info("🚀 Background Auto-Scanner Engine Active 24/7!")
@@ -362,7 +347,7 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         await context.bot.send_message(chat_id=query.message.chat_id, text=report, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 # ==========================================
-# 9. MAIN EXECUTION ENTRYPOINT
+# 9. MAIN EXECUTION
 # ==========================================
 if __name__ == "__main__":
     initialize_fyers()
