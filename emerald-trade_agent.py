@@ -96,15 +96,7 @@ DAILY_COMPLETED_TRADES = []
 def initialize_broker_apis():
     global fyers, kotak_neo
     
-    if FYERS_AVAILABLE:
-        token = os.environ.get("FYERS_ACCESS_TOKEN", "")
-        if token:
-            try:
-                fyers = fyersModel.FyersModel(client_id=FYERS_CLIENT_ID, is_async=False, token=token, log_path="")
-                logging.info("✅ Fyers API Session Initialized!")
-            except Exception as e:
-                logging.error(f"❌ Fyers Init Error: {e}")
-
+    # 1. KOTAK NEO INITIALIZATION (Priority)
     if KOTAK_AVAILABLE and KOTAK_CONSUMER_KEY and KOTAK_CONSUMER_SECRET:
         try:
             kotak_neo = NeoAPI(consumer_key=KOTAK_CONSUMER_KEY, consumer_secret=KOTAK_CONSUMER_SECRET, environment="prod")
@@ -113,6 +105,16 @@ def initialize_broker_apis():
                 logging.info("✅ Kotak Neo API Session Initialized!")
         except Exception as e:
             logging.error(f"❌ Kotak Neo Init Error: {e}")
+
+    # 2. FYERS INITIALIZATION
+    if FYERS_AVAILABLE:
+        token = os.environ.get("FYERS_ACCESS_TOKEN", "")
+        if token:
+            try:
+                fyers = fyersModel.FyersModel(client_id=FYERS_CLIENT_ID, is_async=False, token=token, log_path="")
+                logging.info("✅ Fyers API Session Initialized!")
+            except Exception as e:
+                logging.error(f"❌ Fyers Init Error: {e}")
 
 # ==========================================
 # 2. IN-CODE SELF-PINGING SERVER (KEEPS BOT AWAKE)
@@ -126,10 +128,9 @@ def keep_awake_ping():
     while True:
         try:
             time.sleep(600)  # Wait 10 minutes
-            response = requests.get(RENDER_EXTERNAL_URL, timeout=10)
-            logging.info(f"💓 Self-Ping Status: {response.status_code} - Bot kept awake!")
-        except Exception as e:
-            logging.error(f"⚠️ Self-Ping Failed: {e}")
+            requests.get(RENDER_EXTERNAL_URL, timeout=10)
+        except Exception:
+            pass
 
 # ==========================================
 # 3. OPENING BELL VOLATILITY GUARD
@@ -168,6 +169,7 @@ def fetch_live_ohlc(asset_name, is_stock=False):
     if not config:
         return pd.DataFrame()
 
+    # Try Fyers first for charts
     if fyers and not is_stock and "fyers" in config:
         try:
             tz = pytz.timezone("Asia/Kolkata")
@@ -188,6 +190,7 @@ def fetch_live_ohlc(asset_name, is_stock=False):
         except Exception:
             pass
 
+    # Seamless Yahoo Fallback if Fyers fails (perfect 2-minute candles)
     try:
         yahoo_sym = config["yahoo"]
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_sym}?range=4d&interval=2m"
@@ -221,34 +224,36 @@ def fetch_live_ohlc(asset_name, is_stock=False):
     return pd.DataFrame()
 
 # ==========================================
-# 6. EXACT PURE-API PREMIUM ENGINE (NO GUESSWORK)
+# 6. EXACT PURE-API PREMIUM ENGINE
 # ==========================================
 def fetch_real_option_premium(asset_name, strike_price, option_type):
-    if fyers:
-        try:
-            exchange = "BSE" if asset_name == "SENSEX" else "NSE"
-            fyers_symbol = f"{exchange}:{asset_name}-INDEX"
-            res = fyers.optionchain(data={"symbol": fyers_symbol, "strikecount": 5})
-            if res and res.get("s") == "ok" and "data" in res:
-                for opt in res["data"].get("optionsChain", []):
-                    if opt.get("strike_price") == strike_price and opt.get("option_type") == option_type:
-                        return max(round(float(opt.get("ltp")), 2), 5.0)
-        except Exception:
-            pass
-
+    # ✅ PRIORITY 1: Kotak Neo (Does not require daily manual token reset)
     if kotak_neo and asset_name in ALL_ASSETS and "kotak" in ALL_ASSETS[asset_name]:
         try:
             exchange = "bse_fo" if asset_name == "SENSEX" else "nse_fo"
-            res = kotak_neo.search_scrip(exchange=exchange, segment="opt", expiry="", name=asset_name, strike=str(strike_price), option_type=option_type)
+            search_name = asset_name.replace(" ", "")  
+            res = kotak_neo.search_scrip(exchange=exchange, segment="opt", expiry="", name=search_name, strike=str(strike_price), option_type=option_type)
             if res and len(res) > 0:
                 instrument_token = res[0]['pSymbol']
                 quote_res = kotak_neo.quote(instrument_token=instrument_token, quote_type="ltp")
                 if quote_res and "data" in quote_res:
                     return max(round(float(quote_res["data"]["ltp"]), 2), 5.0)
-        except Exception:
-            pass
+        except Exception as e:
+            logging.error(f"Kotak Neo Quote Error for {asset_name}: {e}")
 
-    # 🔥 PURE API ENFORCEMENT: Returns None if exact live premium cannot be fetched.
+    # ✅ PRIORITY 2: Fyers (Backup)
+    if fyers and asset_name in ALL_ASSETS and "fyers" in ALL_ASSETS[asset_name]:
+        try:
+            fyers_symbol = ALL_ASSETS[asset_name]["fyers"]
+            res = fyers.optionchain(data={"symbol": fyers_symbol, "strikecount": 5})
+            if res and res.get("s") == "ok" and "data" in res:
+                for opt in res["data"].get("optionsChain", []):
+                    if opt.get("strike_price") == strike_price and opt.get("option_type") == option_type:
+                        return max(round(float(opt.get("ltp")), 2), 5.0)
+        except Exception as e:
+            logging.error(f"Fyers Option Chain Error for {asset_name}: {e}")
+
+    # Returns None if APIs fail, preventing blind trades.
     return None
 
 # ==========================================
@@ -458,6 +463,7 @@ def analyze_asset_scalp(asset_name, is_auto_scan=False):
         if active and active.get("status") == "OPEN": return None
         if active and active.get("type") == current_signal_type and active.get("status") == "CLOSED": return None
 
+    # PURE API: ABORT TRADE IF PREMIUM FETCH FAILS
     real_opt_premium = fetch_real_option_premium(asset_name, itm_strike, opt_type)
     if real_opt_premium is None:
         avoid_key = f"{asset_name}_API_PREMIUM_FAIL"
